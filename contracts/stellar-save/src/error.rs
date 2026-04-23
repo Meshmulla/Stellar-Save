@@ -175,6 +175,7 @@ impl StellarSaveError {
             2000..=2999 => ErrorCategory::Member,
             3000..=3999 => ErrorCategory::Contribution,
             4000..=4999 => ErrorCategory::Payout,
+            5000..=5999 => ErrorCategory::Template,
             9000..=9999 => ErrorCategory::System,
             _ => ErrorCategory::Unknown,
         }
@@ -196,6 +197,9 @@ pub enum ErrorCategory {
 
     /// Errors related to payout operations.
     Payout,
+
+    /// Errors related to group template operations.
+    Template,
 
     /// System-level errors and internal failures.
     System,
