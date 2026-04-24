@@ -137,36 +137,40 @@ pub struct ContributionAmountChanged {
     pub new_amount: i128,
     pub effective_cycle: u32,
     pub changed_at: u64,
-
-/// Event emitted when a specific group is paused by its creator.
-
-/// Event emitted when a cycle starts.
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CycleStarted {
-    pub group_id: u64,
-    pub cycle_id: u32,
-    pub started_at: u64,
 }
 
-/// Event emitted when a cycle ends (transitions to next).
+/// Event emitted when a specific group is paused by its creator.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CycleEnded {
+pub struct GroupPaused {
     pub group_id: u64,
+    pub paused_by: Address,
+    pub paused_at: u64,
+}
 
+/// Event emitted when a specific group is unpaused by its creator.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GroupUnpaused {
+    pub group_id: u64,
     pub unpaused_by: Address,
     pub unpaused_at: u64,
-
-
-    pub cycle_id: u32,
-    pub ended_at: u64,
-
 }
 
 /// Utility functions for emitting events.
 pub struct EventEmitter;
+
+/// Event emitted when two groups are merged into a new group.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GroupsMerged {
+    pub merged_group_id: u64,
+    pub source_group_id_1: u64,
+    pub source_group_id_2: u64,
+    pub member_count: u32,
+    pub combined_balance: i128,
+    pub merged_at: u64,
+}
 
 /// Event emitted when a penalty is applied to a member for a missed contribution.
 #[contracttype]
@@ -398,9 +402,25 @@ impl EventEmitter {
             changed_at,
         };
         env.events().publish(("contribution_amount_changed",), event);
+    }
 
     pub fn emit_group_paused(env: &Env, group_id: u64, paused_by: Address, paused_at: u64) {
         let event = GroupPaused {
+            group_id,
+            paused_by,
+            paused_at,
+        };
+        env.events().publish(("group_paused",), event);
+    }
+
+    pub fn emit_group_unpaused(env: &Env, group_id: u64, unpaused_by: Address, unpaused_at: u64) {
+        let event = GroupUnpaused {
+            group_id,
+            unpaused_by,
+            unpaused_at,
+        };
+        env.events().publish(("group_unpaused",), event);
+    }
 
     pub fn emit_penalty_applied(
         env: &Env,
@@ -410,7 +430,6 @@ impl EventEmitter {
         cycle_id: u32,
     ) {
         let event = PenaltyApplied {
-
             group_id,
             member,
             amount,
@@ -432,12 +451,27 @@ impl EventEmitter {
             cycle_id,
             recovered_at: env.ledger().timestamp(),
         };
-
-        env.events().publish(("group_unpaused",), event);
-
-
         env.events().publish(("penalty_recovered",), event);
+    }
 
+    pub fn emit_groups_merged(
+        env: &Env,
+        merged_group_id: u64,
+        source_group_id_1: u64,
+        source_group_id_2: u64,
+        member_count: u32,
+        combined_balance: i128,
+        merged_at: u64,
+    ) {
+        let event = GroupsMerged {
+            merged_group_id,
+            source_group_id_1,
+            source_group_id_2,
+            member_count,
+            combined_balance,
+            merged_at,
+        };
+        env.events().publish(("groups_merged",), event);
     }
 }
 

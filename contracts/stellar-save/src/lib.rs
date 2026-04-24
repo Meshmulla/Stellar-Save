@@ -33,6 +33,7 @@ pub mod storage;
 pub mod token;
 
 mod multi_token_tests;
+mod merge_tests;
 
 // Re-export for convenience
 pub use contribution::{ContributionPage, ContributionRecord};
@@ -1826,6 +1827,195 @@ pub fn is_member(
         );
 
         Ok(())
+    }
+
+    /// Merges two compatible Pending groups into a new group.
+    ///
+    /// Compatibility requires both groups to have the same `contribution_amount`
+    /// and `cycle_duration`. Both source groups must be in `Pending` status.
+    /// The caller must be the creator of group_id_1.
+    ///
+    /// The merged group inherits:
+    /// - contribution_amount and cycle_duration from the source groups
+    /// - max_members = sum of both groups' max_members
+    /// - combined member list with recalculated sequential payout positions
+    /// - combined balance (sum of both groups' balances)
+    ///
+    /// Both source groups are marked Cancelled after the merge.
+    ///
+    /// # Arguments
+    /// * `env` - Soroban environment
+    /// * `group_id_1` - ID of the first source group (caller must be its creator)
+    /// * `group_id_2` - ID of the second source group
+    ///
+    /// # Returns
+    /// * `Ok(u64)` - ID of the newly created merged group
+    /// * `Err(StellarSaveError::GroupNotFound)` - Either group doesn't exist
+    /// * `Err(StellarSaveError::Unauthorized)` - Caller is not creator of group_id_1
+    /// * `Err(StellarSaveError::InvalidState)` - Either group is not Pending
+    /// * `Err(StellarSaveError::MergeIncompatible)` - Groups have different contribution_amount or cycle_duration
+    pub fn merge_groups(
+        env: Env,
+        group_id_1: u64,
+        group_id_2: u64,
+    ) -> Result<u64, StellarSaveError> {
+        // 1. Load both groups
+        let group1: Group = env
+            .storage()
+            .persistent()
+            .get(&StorageKeyBuilder::group_data(group_id_1))
+            .ok_or(StellarSaveError::GroupNotFound)?;
+
+        let group2: Group = env
+            .storage()
+            .persistent()
+            .get(&StorageKeyBuilder::group_data(group_id_2))
+            .ok_or(StellarSaveError::GroupNotFound)?;
+
+        // 2. Authorize: caller must be creator of group 1
+        group1.creator.require_auth();
+
+        // 3. Both groups must be Pending
+        let status1: GroupStatus = env
+            .storage()
+            .persistent()
+            .get(&StorageKeyBuilder::group_status(group_id_1))
+            .unwrap_or(GroupStatus::Pending);
+        let status2: GroupStatus = env
+            .storage()
+            .persistent()
+            .get(&StorageKeyBuilder::group_status(group_id_2))
+            .unwrap_or(GroupStatus::Pending);
+
+        if status1 != GroupStatus::Pending || status2 != GroupStatus::Pending {
+            return Err(StellarSaveError::InvalidState);
+        }
+
+        // 4. Validate compatibility
+        if group1.contribution_amount != group2.contribution_amount
+            || group1.cycle_duration != group2.cycle_duration
+        {
+            return Err(StellarSaveError::MergeIncompatible);
+        }
+
+        // 5. Load member lists from both groups
+        let members1: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&StorageKeyBuilder::group_members(group_id_1))
+            .unwrap_or(Vec::new(&env));
+        let members2: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&StorageKeyBuilder::group_members(group_id_2))
+            .unwrap_or(Vec::new(&env));
+
+        // 6. Combine member lists
+        let mut combined_members: Vec<Address> = Vec::new(&env);
+        for m in members1.iter() {
+            combined_members.push_back(m);
+        }
+        for m in members2.iter() {
+            combined_members.push_back(m);
+        }
+        let total_members = combined_members.len();
+
+        // 7. Compute combined balance
+        let balance1: i128 = env
+            .storage()
+            .persistent()
+            .get(&StorageKeyBuilder::group_balance(group_id_1))
+            .unwrap_or(0);
+        let balance2: i128 = env
+            .storage()
+            .persistent()
+            .get(&StorageKeyBuilder::group_balance(group_id_2))
+            .unwrap_or(0);
+        let combined_balance = balance1.checked_add(balance2).ok_or(StellarSaveError::Overflow)?;
+
+        // 8. Create merged group
+        let merged_id = Self::generate_next_group_id(&env)?;
+        let timestamp = env.ledger().timestamp();
+        let new_max_members = group1
+            .max_members
+            .checked_add(group2.max_members)
+            .ok_or(StellarSaveError::Overflow)?;
+        let new_min_members = group1.min_members.min(group2.min_members);
+
+        let mut merged_group = Group::new(
+            merged_id,
+            group1.creator.clone(),
+            group1.contribution_amount,
+            group1.cycle_duration,
+            new_max_members,
+            new_min_members,
+            timestamp,
+            group1.grace_period_seconds,
+        );
+        merged_group.member_count = total_members;
+
+        // 9. Store merged group data
+        env.storage()
+            .persistent()
+            .set(&StorageKeyBuilder::group_data(merged_id), &merged_group);
+        env.storage()
+            .persistent()
+            .set(&StorageKeyBuilder::group_status(merged_id), &GroupStatus::Pending);
+        env.storage()
+            .persistent()
+            .set(&StorageKeyBuilder::group_members(merged_id), &combined_members);
+        env.storage()
+            .persistent()
+            .set(&StorageKeyBuilder::group_balance(merged_id), &combined_balance);
+
+        // 10. Store merged-from provenance
+        env.storage().persistent().set(
+            &StorageKeyBuilder::group_merged_from(merged_id),
+            &(group_id_1, group_id_2),
+        );
+
+        // 11. Assign sequential payout positions to all combined members
+        for i in 0..combined_members.len() {
+            let member = combined_members.get(i).unwrap();
+            let position = i;
+            let profile = MemberProfile {
+                address: member.clone(),
+                group_id: merged_id,
+                payout_position: position,
+                joined_at: timestamp,
+            };
+            env.storage().persistent().set(
+                &StorageKeyBuilder::member_profile(merged_id, member.clone()),
+                &profile,
+            );
+            env.storage().persistent().set(
+                &StorageKeyBuilder::member_payout_eligibility(merged_id, member.clone()),
+                &position,
+            );
+        }
+
+        // 12. Cancel both source groups
+        env.storage().persistent().set(
+            &StorageKeyBuilder::group_status(group_id_1),
+            &GroupStatus::Cancelled,
+        );
+        env.storage().persistent().set(
+            &StorageKeyBuilder::group_status(group_id_2),
+            &GroupStatus::Cancelled,
+        );
+
+        // 13. Emit GroupsMerged event
+        EventEmitter::emit_groups_merged(
+            &env,
+            merged_id,
+            group_id_1,
+            group_id_2,
+            total_members,
+            combined_balance,
+            timestamp,
+        );
+
+        Ok(merged_id)
     }
 
     // ============================================================================

@@ -74,6 +74,10 @@ pub enum GroupKey {
     TokenConfig(u64),
     /// Dispute reason string: GROUP_DISPUTE_REASON_{id}
     DisputeReason(u64),
+
+    /// Merged-from source group IDs: GROUP_MERGED_FROM_{id}
+    /// Stores the two source group IDs that were merged to create this group.
+    MergedFrom(u64),
 }
 
 /// Storage keys for member-related data.
@@ -241,6 +245,11 @@ impl StorageKeyBuilder {
 
     pub fn group_dispute_reason(group_id: u64) -> StorageKey {
         StorageKey::Group(GroupKey::DisputeReason(group_id))
+    }
+
+    /// Creates a key for storing the source group IDs of a merged group.
+    pub fn group_merged_from(group_id: u64) -> StorageKey {
+        StorageKey::Group(GroupKey::MergedFrom(group_id))
     }
 
     // Member key builders

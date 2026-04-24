@@ -94,6 +94,10 @@ pub enum StellarSaveError {
     /// The cycle deadline has passed; contributions are no longer accepted.
     /// Error Code: 3005
     CycleDeadlineExpired = 3005,
+
+    /// The two groups are not compatible for merging (different contribution amount or cycle duration).
+    /// Error Code: 1005
+    MergeIncompatible = 1005,
 }
 
 impl StellarSaveError {
@@ -174,8 +178,8 @@ impl StellarSaveError {
             StellarSaveError::CycleDeadlineExpired => {
                 "The cycle deadline has passed. Contributions are no longer accepted for this cycle."
             }
-            StellarSaveError::DisputeActive => {
-                "A dispute is active on this group. Contributions and payouts are blocked."
+            StellarSaveError::MergeIncompatible => {
+                "The two groups are not compatible for merging. Both must have the same contribution amount and cycle duration."
             }
         }
     }
@@ -307,6 +311,12 @@ impl ErrorRecoveryStrategy {
             }
             StellarSaveError::Overflow => {
                 "The ID counter has reached its maximum. This is extremely rare and requires contract upgrade."
+            }
+            StellarSaveError::CycleDeadlineExpired => {
+                "The cycle deadline has passed. Contributions are no longer accepted for this cycle."
+            }
+            StellarSaveError::MergeIncompatible => {
+                "Ensure both groups have the same contribution_amount and cycle_duration before merging."
             }
         }
     }
