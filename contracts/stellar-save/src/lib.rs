@@ -38,6 +38,7 @@ mod multi_token_tests;
 mod merge_tests;
 mod milestone_tests;
 mod invitation_tests;
+mod upgrade_tests;
 pub mod milestones;
 pub mod gas_benchmark;
 mod auto_contribution_tests;
