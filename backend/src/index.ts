@@ -18,6 +18,7 @@ import { createV1Router } from './routes/v1';
 import { createV2Router } from './routes/v2';
 import { metricsMiddleware, metricsHandler } from './metrics';
 import { requestLogger } from './logger';
+import { createRateLimiterMiddleware } from './rate_limiter';
 
 dotenv.config();
 
@@ -27,6 +28,7 @@ app.use(express.json());
 app.use(requestLogger);
 app.use(metricsMiddleware);
 app.get('/metrics', metricsHandler);
+app.use(createRateLimiterMiddleware());
 
 // ── GraphQL ───────────────────────────────────────────────────────────────────
 const schema = makeExecutableSchema({ typeDefs, resolvers });
