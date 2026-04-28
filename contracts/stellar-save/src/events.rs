@@ -741,6 +741,42 @@ impl EventEmitter {
         };
         env.events().publish(("group_rated",), event);
     }
+
+    pub fn emit_cycle_deadline_extended(
+        env: &Env,
+        group_id: u64,
+        cycle: u32,
+        extension_seconds: u64,
+        new_deadline: u64,
+        extended_by: Address,
+        extended_at: u64,
+    ) {
+        let event = CycleDeadlineExtended {
+            group_id,
+            cycle,
+            extension_seconds,
+            new_deadline,
+            extended_by,
+            extended_at,
+        };
+        env.events().publish(("cycle_deadline_extended",), event);
+    }
+
+    pub fn emit_group_cloned(
+        env: &Env,
+        original_group_id: u64,
+        new_group_id: u64,
+        creator: Address,
+        cloned_at: u64,
+    ) {
+        let event = GroupCloned {
+            original_group_id,
+            new_group_id,
+            creator,
+            cloned_at,
+        };
+        env.events().publish(("group_cloned",), event);
+    }
 }
 
 #[cfg(test)]
