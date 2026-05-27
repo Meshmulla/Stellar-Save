@@ -1,5 +1,18 @@
 use soroban_sdk::{contracttype, Address};
 
+/// Determines how the payout recipient is selected each cycle.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PayoutOrder {
+    /// Members receive payouts in the fixed order assigned at group start (default).
+    Sequential,
+    /// Recipient is chosen randomly each cycle using ledger entropy.
+    Random,
+    /// Each cycle, the member who submits the highest bid wins the payout.
+    /// Bids are denominated in stroops and must be ≥ 0.
+    Bid,
+}
+
 /// Payout Record structure for tracking payout events in rotational savings groups.
 ///
 /// Each payout represents a distribution of pooled funds to a member during their

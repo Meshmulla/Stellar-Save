@@ -437,6 +437,7 @@ impl StellarSaveContract {
         max_members: u32,
         token_address: Address,
         grace_period_seconds: u64,
+        payout_order: crate::payout::PayoutOrder,
     ) -> Result<u64, StellarSaveError> {
         // 1. Authorization: Only the creator can initiate this transaction
         creator.require_auth();
@@ -493,7 +494,7 @@ impl StellarSaveContract {
         // 7. Initialize Group Struct (using rounded amount)
         let current_time = env.ledger().timestamp();
         let min_members = 2; // Default minimum members
-        let new_group = Group::new(
+        let mut new_group = Group::new(
             group_id,
             creator.clone(),
             rounded_amount,
@@ -503,6 +504,7 @@ impl StellarSaveContract {
             current_time,
             0, // grace_period_seconds - using default of 0
         );
+        new_group.payout_order = payout_order;
 
         // 8. Store Group Data
         let group_key = StorageKeyBuilder::group_data(group_id);
@@ -1730,9 +1732,60 @@ impl StellarSaveContract {
         payout_executor::execute_payout(env, group_id)
     }
 
-    // ============================================================================
-    // ISSUE #425: Group Status Management
-    // ============================================================================
+    /// Submits a bid for the current payout cycle in a `Bid`-order group.
+    ///
+    /// The member with the highest bid at payout time wins the cycle payout.
+    /// The bid amount is stored on-chain and replaces any previous bid by the
+    /// same member for the same cycle.
+    ///
+    /// # Arguments
+    /// * `env` - Soroban environment
+    /// * `group_id` - ID of the group
+    /// * `bidder` - Address of the bidding member
+    /// * `bid_amount` - Bid in stroops (must be ≥ 0)
+    ///
+    /// # Returns
+    /// * `Ok(())` - Bid recorded successfully
+    /// * `Err(StellarSaveError::InvalidState)` - Group is not using Bid payout order
+    /// * `Err(StellarSaveError::NotMember)` - Bidder is not a member
+    /// * `Err(StellarSaveError::InvalidAmount)` - Bid amount is negative
+    pub fn bid_for_payout(
+        env: Env,
+        group_id: u64,
+        bidder: Address,
+        bid_amount: i128,
+    ) -> Result<(), StellarSaveError> {
+        bidder.require_auth();
+
+        if bid_amount < 0 {
+            return Err(StellarSaveError::InvalidAmount);
+        }
+
+        let group_key = StorageKeyBuilder::group_data(group_id);
+        let group: Group = env
+            .storage()
+            .persistent()
+            .get(&group_key)
+            .ok_or(StellarSaveError::GroupNotFound)?;
+
+        if group.payout_order != crate::payout::PayoutOrder::Bid {
+            return Err(StellarSaveError::InvalidState);
+        }
+
+        if group.status != GroupStatus::Active {
+            return Err(StellarSaveError::InvalidState);
+        }
+
+        let member_key = StorageKeyBuilder::member_profile(group_id, bidder.clone());
+        if !env.storage().persistent().has(&member_key) {
+            return Err(StellarSaveError::NotMember);
+        }
+
+        let bid_key = StorageKeyBuilder::group_bid_amount(group_id, group.current_cycle, bidder);
+        env.storage().persistent().set(&bid_key, &bid_amount);
+
+        Ok(())
+    }
 
     /// Pauses a group, preventing contributions and payouts.
     ///
