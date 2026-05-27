@@ -20,6 +20,8 @@ import { createV2Router } from './routes/v2';
 import { metricsMiddleware, metricsHandler } from './metrics';
 import { requestLogger } from './logger';
 import { createRateLimiterMiddleware } from './rate_limiter';
+import { createAuthRouter } from './routes/auth';
+import { createUserRouter } from './routes/user';
 
 dotenv.config();
 
@@ -142,6 +144,12 @@ if (process.env.INDEXER_ENABLED === 'true') {
 }
 
 const services = { engine, abTest, exportService, backupService, backupScheduler, recoveryService, backupMonitor, eventIndexer };
+
+// ── Auth routes (public — no JWT required) ───────────────────────────────────
+app.use('/api/auth', createAuthRouter());
+
+// ── User routes (JWT protected) ───────────────────────────────────────────────
+app.use('/api/user', createUserRouter());
 
 // ── Versioned API routes ──────────────────────────────────────────────────────
 app.use('/api', versionMiddleware);
