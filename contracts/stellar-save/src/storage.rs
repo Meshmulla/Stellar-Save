@@ -107,6 +107,10 @@ pub enum GroupKey {
     /// Rating aggregate: GROUP_RATING_AGG_{id}
     /// Stores the running RatingAggregate (total_stars + rating_count) for a group.
     RatingAggregate(u64),
+
+    /// Per-member dispute vote: GROUP_DISPUTE_VOTE_{id}_{member}
+    /// Stores a bool indicating whether this member has raised a dispute.
+    DisputeVote(u64, Address),
 }
 
 /// Storage keys for member-related data.
@@ -265,6 +269,10 @@ pub enum CounterKey {
     /// Deadline extension for a specific group cycle: DEADLINE_EXTENSION_{group_id}_{cycle}
     /// Stores the total extension in seconds applied to a cycle's contribution deadline.
     DeadlineExtension(u64, u32),
+
+    /// Dispute vote count for a group: COUNTER_DISPUTE_COUNT_{group_id}
+    /// Tracks the number of members who have raised a dispute, avoiding O(n) member scans.
+    DisputeCount(u64),
 }
 
 /// Utility functions for creating storage keys with consistent formatting.
@@ -334,6 +342,11 @@ impl StorageKeyBuilder {
     /// Creates a key for the rating aggregate of a group.
     pub fn group_rating_aggregate(group_id: u64) -> StorageKey {
         StorageKey::Group(GroupKey::RatingAggregate(group_id))
+    }
+
+    /// Creates a key for a member's dispute vote.
+    pub fn group_dispute_vote(group_id: u64, member: Address) -> StorageKey {
+        StorageKey::Group(GroupKey::DisputeVote(group_id, member))
     }
 
     // Member key builders
@@ -501,6 +514,11 @@ impl StorageKeyBuilder {
     /// Creates a key for the deadline extension of a specific group cycle.
     pub fn deadline_extension(group_id: u64, cycle: u32) -> StorageKey {
         StorageKey::Counter(CounterKey::DeadlineExtension(group_id, cycle))
+    }
+
+    /// Creates a key for the dispute vote count of a group.
+    pub fn dispute_count(group_id: u64) -> StorageKey {
+        StorageKey::Counter(CounterKey::DisputeCount(group_id))
     }
 
     /// Creates a key for the token configuration of a specific group.

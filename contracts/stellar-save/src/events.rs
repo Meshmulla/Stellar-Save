@@ -78,6 +78,29 @@ pub struct GroupStatusChanged {
     pub changed_at: u64,
 }
 
+/// Event emitted when a member raises a dispute against a group.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeRaised {
+    pub group_id: u64,
+    pub raised_by: Address,
+    pub reason: String,
+    pub vote_count: u32,
+    pub threshold: u32,
+    pub auto_paused: bool,
+    pub raised_at: u64,
+}
+
+/// Event emitted when a dispute is resolved by the group creator.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeResolved {
+    pub group_id: u64,
+    pub resolved_by: Address,
+    pub resolution: String,
+    pub resolved_at: u64,
+}
+
 /// Event emitted when a group's metadata is updated.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -555,6 +578,44 @@ impl EventEmitter {
             unpaused_at,
         };
         env.events().publish(("group_unpaused",), event);
+    }
+
+    pub fn emit_dispute_raised(
+        env: &Env,
+        group_id: u64,
+        raised_by: Address,
+        reason: String,
+        vote_count: u32,
+        threshold: u32,
+        auto_paused: bool,
+        raised_at: u64,
+    ) {
+        let event = DisputeRaised {
+            group_id,
+            raised_by,
+            reason,
+            vote_count,
+            threshold,
+            auto_paused,
+            raised_at,
+        };
+        env.events().publish(("dispute_raised",), event);
+    }
+
+    pub fn emit_dispute_resolved(
+        env: &Env,
+        group_id: u64,
+        resolved_by: Address,
+        resolution: String,
+        resolved_at: u64,
+    ) {
+        let event = DisputeResolved {
+            group_id,
+            resolved_by,
+            resolution,
+            resolved_at,
+        };
+        env.events().publish(("dispute_resolved",), event);
     }
 
     pub fn emit_penalty_applied(

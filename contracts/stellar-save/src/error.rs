@@ -144,6 +144,10 @@ pub enum StellarSaveError {
     /// The requested deadline extension exceeds the maximum allowed (7 days), or is zero.
     /// Error Code: 7001
     DeadlineExtensionExceedsMax = 7001,
+
+    /// The member has already voted on the current dispute.
+    /// Error Code: 2005
+    AlreadyVoted = 2005,
 }
 
 impl StellarSaveError {
@@ -263,6 +267,9 @@ impl StellarSaveError {
             // Deadline-related errors
             StellarSaveError::DeadlineExtensionExceedsMax => {
                 "The requested deadline extension exceeds the maximum allowed (7 days), or is zero."
+            }
+            StellarSaveError::AlreadyVoted => {
+                "You have already raised a dispute for this group. Each member may only vote once per dispute round."
             }
         }
     }
@@ -446,6 +453,9 @@ impl ErrorRecoveryStrategy {
             // Deadline errors - recovery strategies
             StellarSaveError::DeadlineExtensionExceedsMax => {
                 "Provide an extension between 1 and 604800 seconds (7 days). Split larger extensions across multiple calls."
+            }
+            StellarSaveError::AlreadyVoted => {
+                "You have already raised a dispute for this group. Wait for the current dispute to be resolved before voting again."
             }
         }
     }

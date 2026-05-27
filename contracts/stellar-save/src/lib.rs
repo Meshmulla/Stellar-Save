@@ -1848,6 +1848,163 @@ impl StellarSaveContract {
         Self::resume_group(env, group_id, caller)
     }
 
+    /// Raises a dispute for a group. Any member may call this once per dispute window.
+    ///
+    /// When more than 50% of members have raised a dispute the group is automatically
+    /// paused and `group.dispute_active` is set to `true`.
+    ///
+    /// # Errors
+    /// - `GroupNotFound` - Group doesn't exist
+    /// - `NotMember` - Caller is not a member
+    /// - `AlreadyVoted` (2005) - Member has already raised a dispute this round
+    pub fn raise_dispute(
+        env: Env,
+        group_id: u64,
+        caller: Address,
+        reason: soroban_sdk::String,
+    ) -> Result<(), StellarSaveError> {
+        caller.require_auth();
+
+        let group_key = StorageKeyBuilder::group_data(group_id);
+        let mut group: Group = env
+            .storage()
+            .persistent()
+            .get(&group_key)
+            .ok_or(StellarSaveError::GroupNotFound)?;
+
+        // Verify caller is a member
+        let member_key = StorageKeyBuilder::member_profile(group_id, caller.clone());
+        if !env.storage().persistent().has(&member_key) {
+            return Err(StellarSaveError::NotMember);
+        }
+
+        // Each member may only vote once per dispute round
+        let vote_key = StorageKeyBuilder::group_dispute_vote(group_id, caller.clone());
+        if env.storage().persistent().has(&vote_key) {
+            return Err(StellarSaveError::AlreadyVoted);
+        }
+
+        // Record this member's vote
+        env.storage().persistent().set(&vote_key, &true);
+
+        // Store the dispute reason on-chain (last reason wins; first is most relevant)
+        let reason_key = StorageKeyBuilder::group_dispute_reason(group_id);
+        if !env.storage().persistent().has(&reason_key) {
+            env.storage().persistent().set(&reason_key, &reason);
+        }
+
+        // Increment the dispute count using the counter (avoids O(n) member scan)
+        let count_key = StorageKeyBuilder::dispute_count(group_id);
+        let vote_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&count_key)
+            .unwrap_or(0u32)
+            + 1;
+        env.storage().persistent().set(&count_key, &vote_count);
+
+        // Auto-pause when >50% of members have raised a dispute
+        let threshold = group.member_count / 2 + 1;
+        let auto_paused = vote_count >= threshold;
+        if auto_paused {
+            group.dispute_active = true;
+            group.paused = true;
+            group.status = GroupStatus::Paused;
+            env.storage().persistent().set(&group_key, &group);
+
+            let status_key = StorageKeyBuilder::group_status(group_id);
+            env.storage()
+                .persistent()
+                .set(&status_key, &GroupStatus::Paused);
+        }
+
+        let timestamp = env.ledger().timestamp();
+        EventEmitter::emit_dispute_raised(
+            &env,
+            group_id,
+            caller,
+            reason,
+            vote_count,
+            threshold,
+            auto_paused,
+            timestamp,
+        );
+
+        Ok(())
+    }
+
+    /// Resolves an active dispute. Only the group creator may call this.
+    ///
+    /// Clears `dispute_active`, unpauses the group, resets the dispute counter,
+    /// removes all member dispute votes so a new dispute round can begin,
+    /// and emits a `DisputeResolved` event.
+    ///
+    /// # Errors
+    /// - `GroupNotFound` - Group doesn't exist
+    /// - `Unauthorized` - Caller is not the group creator
+    /// - `InvalidState` - No dispute is currently active
+    pub fn resolve_dispute(
+        env: Env,
+        group_id: u64,
+        caller: Address,
+        resolution: soroban_sdk::String,
+    ) -> Result<(), StellarSaveError> {
+        caller.require_auth();
+
+        let group_key = StorageKeyBuilder::group_data(group_id);
+        let mut group: Group = env
+            .storage()
+            .persistent()
+            .get(&group_key)
+            .ok_or(StellarSaveError::GroupNotFound)?;
+
+        if group.creator != caller {
+            return Err(StellarSaveError::Unauthorized);
+        }
+
+        if !group.dispute_active {
+            return Err(StellarSaveError::InvalidState);
+        }
+
+        // Clear dispute state and unpause
+        group.dispute_active = false;
+        group.paused = false;
+        group.status = GroupStatus::Active;
+        env.storage().persistent().set(&group_key, &group);
+
+        // Update the status key to Active
+        let status_key = StorageKeyBuilder::group_status(group_id);
+        env.storage()
+            .persistent()
+            .set(&status_key, &GroupStatus::Active);
+
+        // Reset the dispute counter
+        let count_key = StorageKeyBuilder::dispute_count(group_id);
+        env.storage().persistent().remove(&count_key);
+
+        // Clear the stored dispute reason
+        let reason_key = StorageKeyBuilder::group_dispute_reason(group_id);
+        env.storage().persistent().remove(&reason_key);
+
+        // Reset all member dispute votes for the next round
+        let members_key = StorageKeyBuilder::group_members(group_id);
+        if let Some(members) = env
+            .storage()
+            .persistent()
+            .get::<_, soroban_sdk::Vec<Address>>(&members_key)
+        {
+            for member in members.iter() {
+                let k = StorageKeyBuilder::group_dispute_vote(group_id, member);
+                env.storage().persistent().remove(&k);
+            }
+        }
+
+        let timestamp = env.ledger().timestamp();
+        EventEmitter::emit_dispute_resolved(&env, group_id, caller, resolution, timestamp);
+
+        Ok(())
+    }
+
     /// Cancels a group and returns funds to contributors.
     ///
     /// # Arguments
