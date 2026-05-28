@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { format as fastCsvFormat } from 'fast-csv';
+
 import { RecommendationEngine } from '../recommendation';
 import { ABTestingFramework } from '../ab_testing';
 import { EmailService } from '../email_service';
@@ -9,8 +11,9 @@ import { RecoveryService } from '../recovery_service';
 import { BackupMonitor } from '../backup_monitor';
 import { ContractEventIndexer } from '../contract_event_indexer';
 import { AnalyticsService } from '../analytics_service';
-import { createAnalyticsMiddlewareStack } from '../analytics_middleware';
+import { createAnalyticsMiddlewareStack, createAnalyticsCacheMiddleware } from '../analytics_middleware';
 import { Group, UserInteraction, UserPreference } from '../models';
+import { getSorobanPool } from '../lib/soroban';
 
 // ── Shared service instances (passed in from app) ────────────────────────────
 export interface V1Services {
@@ -41,6 +44,26 @@ export function createV1Router(services: V1Services): Router {
 
   // Setup analytics middleware
   const analyticsMiddleware = createAnalyticsMiddlewareStack();
+  // 5-minute cache specifically for the landing page stats endpoint
+  const statsGroupsCache = createAnalyticsCacheMiddleware(300);
+
+  // ── Landing Page Stats ────────────────────────────────────────────────────
+  // GET /stats/groups — platform-wide group statistics for the landing page.
+  // Aggregates from the indexed ContractEvent database; cached 5 min in Redis.
+  router.get(
+    '/stats/groups',
+    analyticsMiddleware.readRateLimit,
+    statsGroupsCache,
+    async (_req, res) => {
+      try {
+        const stats = await analyticsService.getGroupsOverviewStats();
+        res.json(stats);
+      } catch (error) {
+        console.error('Error fetching groups overview stats:', error);
+        res.status(500).json({ error: 'Failed to fetch group statistics' });
+      }
+    }
+  );
 
   // Search
   router.get('/search', async (req, res) => {
@@ -474,6 +497,49 @@ export function createV1Router(services: V1Services): Router {
       console.error('Error clearing cache:', error);
       res.status(500).json({ error: 'Failed to clear cache' });
     }
+  });
+
+  // Members export (CSV streaming) for tax/accounting
+  // GET /api/members/:address/export.csv
+  router.get('/members/:address/export.csv', async (req, res) => {
+    const { address } = req.params;
+
+    // Delay loading mock data to keep startup fast
+    const { mockTransactions, mockGroups } = await import('../mock_data');
+
+    const transactions = mockTransactions
+      .filter((t) => t.memberAddress === address)
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(address)}-contributions-payouts.csv"`
+    );
+
+    // Stream rows without buffering full dataset in memory.
+    const csvStream = fastCsvFormat({
+      headers: ['date', 'group_id', 'type', 'amount', 'transaction_hash'],
+    });
+
+    csvStream.on('error', (err: any) => {
+      console.error('CSV stream error:', err);
+      if (!res.headersSent) res.status(500).end();
+    });
+
+    csvStream.pipe(res);
+
+    for (const t of transactions) {
+      csvStream.write({
+        date: new Date(t.timestamp).toISOString(),
+        group_id: t.groupId,
+        type: t.type,
+        amount: t.amount,
+        transaction_hash: t.stellarTxHash,
+      });
+    }
+
+    csvStream.end();
   });
 
   return router;

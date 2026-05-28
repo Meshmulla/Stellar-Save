@@ -20,7 +20,7 @@ export function createV2Router(services: V1Services): Router {
   const router = Router();
   const { engine, backupService } = services;
 
-  // Health — v2 adds uptime
+  // Health — v2 adds uptime and pool metrics
   router.get('/health', (_req: Request, res: Response) => {
     res.json(
       migrateV1ToV2({
