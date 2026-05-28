@@ -19,8 +19,8 @@ import { ContributionFlow } from '../components/ContributionFlow';
 import { PayoutQueue } from '../components/PayoutQueue';
 import { useNavigation } from '../routing/useNavigation';
 import { useWallet } from '../hooks/useWallet';
-import { useClipboard } from '../hooks/useClipboard';
-import { generateInviteLink } from '../utils/invitation';
+import { usePushNotifications } from '../hooks/usePushNotifications';
+import { ActivityFeed } from '../components/ActivityFeed/ActivityFeed';
 import type { DetailedGroup, GroupMember } from '../utils/groupApi';
 import type { PayoutQueueData } from '../types/contribution';
 
@@ -288,6 +288,14 @@ function GroupDetailContent() {
           <Typography variant="h3" sx={{ mb: 2 }}>Payout Schedule</Typography>
           <PayoutQueue data={payoutQueue} maxHeight={400} />
         </AppCard>
+
+        {/* Activity Feed — chronological on-chain events for this group */}
+        <ActivityFeed
+          groupId={BigInt(groupId)}
+          showFilters
+          showRefresh
+          maxHeight="500px"
+        />
       </Stack>
 
       {/* Member Management Dialog */}
