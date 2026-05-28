@@ -1,5 +1,13 @@
 import { Horizon } from '@stellar/stellar-sdk';
 import { PrismaClient } from './generated/prisma/client';
+import { deliverWebhookEvent } from './routes/webhooks';
+import { recordContribution } from './reputation_service';
+
+export type DependencyHealth = {
+  up: boolean;
+  latencyMs?: number;
+  error?: string;
+};
 
 export class ContractEventIndexer {
   private server: Horizon.Server;
@@ -71,7 +79,6 @@ export class ContractEventIndexer {
 
         // Update cursor to the last processed event
         cursor = data._embedded.records[data._embedded.records.length - 1].paging_token;
-
       } catch (error) {
         console.error('Error streaming events:', error);
         await this.delay(10000); // Wait 10 seconds on error
@@ -81,7 +88,7 @@ export class ContractEventIndexer {
 
   private async storeEventFromHorizon(event: any) {
     try {
-      await this.prisma.contractEvent.create({
+      const stored = await this.prisma.contractEvent.create({
         data: {
           contractId: event.contractId || this.contractId,
           eventType: event.type || 'unknown',
@@ -94,9 +101,49 @@ export class ContractEventIndexer {
         },
       });
       console.log(`Stored event: ${event.type} in ledger ${event.ledger}`);
+
+      // Deliver signed webhook notifications for group events
+      const webhookEvent = this.mapToWebhookEvent(stored.eventType);
+      if (webhookEvent) {
+        const groupId = this.extractGroupId(stored.data);
+        deliverWebhookEvent(webhookEvent, {
+          contractId: stored.contractId,
+          txHash: stored.txHash,
+          ledgerSeq: stored.ledgerSeq,
+          timestamp: stored.timestamp.toISOString(),
+          data: stored.data,
+        }, groupId).catch(() => {/* non-blocking */});
+      }
+
+      // Update member reputation for contribution events
+      if (webhookEvent === 'contribution.created') {
+        const data = stored.data as any;
+        const memberAddress = data?.member || data?.address;
+        if (memberAddress) {
+          // Treat all indexed contributions as on-time (late detection requires cycle data)
+          recordContribution(String(memberAddress), true).catch(() => {/* non-blocking */});
+        }
+      }
     } catch (error) {
       console.error('Error storing event:', error);
     }
+  }
+
+  private mapToWebhookEvent(eventType: string): string | null {
+    const map: Record<string, string> = {
+      'contribution': 'contribution.created',
+      'contribution_created': 'contribution.created',
+      'payout': 'payout.executed',
+      'payout_executed': 'payout.executed',
+      'member_joined': 'member.joined',
+      'join': 'member.joined',
+    };
+    return map[eventType.toLowerCase()] || null;
+  }
+
+  private extractGroupId(data: any): string | undefined {
+    if (!data || typeof data !== 'object') return undefined;
+    return (data as any).group_id || (data as any).groupId || undefined;
   }
 
   async stop() {
@@ -105,8 +152,39 @@ export class ContractEventIndexer {
     console.log('Indexer stopped');
   }
 
+  async readinessCheckDatabase(): Promise<DependencyHealth> {
+    const start = Date.now();
+    try {
+      // Lightweight connectivity test
+      // eslint-disable-next-line @typescript-eslint/no-floating-promises
+      await this.prisma.$queryRaw`SELECT 1`;
+      return { up: true, latencyMs: Date.now() - start };
+    } catch (err) {
+      return {
+        up: false,
+        latencyMs: Date.now() - start,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  async readinessCheckHorizon(): Promise<DependencyHealth> {
+    const start = Date.now();
+    try {
+      // Use Horizon SDK as a reachability check (latest ledger is cheap enough)
+      await this.server.ledgers().order('desc').limit(1).call();
+      return { up: true, latencyMs: Date.now() - start };
+    } catch (err) {
+      return {
+        up: false,
+        latencyMs: Date.now() - start,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
   private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   // Method to get events with pagination and filtering
