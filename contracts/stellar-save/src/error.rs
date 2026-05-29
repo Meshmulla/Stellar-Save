@@ -52,6 +52,10 @@ pub enum StellarSaveError {
     /// Error Code: 3004
     ContributionNotFound = 3004,
 
+    /// The cycle deadline has not yet been reached.
+    /// Error Code: 3005
+    DeadlineNotReached = 3005,
+
     // Payout-related errors (4000-4999)
     /// The payout operation failed due to insufficient funds or transfer error.
     /// Error Code: 4001
@@ -120,6 +124,9 @@ impl StellarSaveError {
             }
             StellarSaveError::ContributionNotFound => {
                 "The contribution record was not found for the specified member and cycle."
+            }
+            StellarSaveError::DeadlineNotReached => {
+                "The cycle deadline has not yet been reached. Cannot advance cycle until deadline passes."
             }
 
             // Payout-related errors
@@ -240,6 +247,9 @@ impl ErrorRecoveryStrategy {
             StellarSaveError::ContributionNotFound => {
                 "The contribution record doesn't exist. Verify the member and cycle number are correct."
             }
+            StellarSaveError::DeadlineNotReached => {
+                "The cycle deadline has not yet passed. Wait until the deadline is reached before calling tick()."
+            }
 
             // Payout errors - recovery strategies
             StellarSaveError::PayoutFailed => {
@@ -272,6 +282,7 @@ impl ErrorRecoveryStrategy {
             StellarSaveError::PayoutFailed
                 | StellarSaveError::InternalError
                 | StellarSaveError::CycleNotComplete
+                | StellarSaveError::DeadlineNotReached
         )
     }
 

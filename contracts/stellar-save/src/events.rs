@@ -93,6 +93,18 @@ pub struct ContractUnpaused {
     pub timestamp: u64,
 }
 
+/// Event emitted when a cycle is advanced via tick function.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CycleAdvanced {
+    pub group_id: u64,
+    pub old_cycle: u32,
+    pub new_cycle: u32,
+    pub payout_executed: bool,
+    pub defaulted: bool,
+    pub advanced_at: u64,
+}
+
 /// Utility functions for emitting events.
 pub struct EventEmitter;
 
@@ -231,6 +243,26 @@ impl EventEmitter {
     pub fn emit_contract_unpaused(env: &Env, admin: Address, timestamp: u64) {
         let event = ContractUnpaused { admin, timestamp };
         env.events().publish(("contract_unpaused",), event);
+    }
+
+    pub fn emit_cycle_advanced(
+        env: &Env,
+        group_id: u64,
+        old_cycle: u32,
+        new_cycle: u32,
+        payout_executed: bool,
+        defaulted: bool,
+        advanced_at: u64,
+    ) {
+        let event = CycleAdvanced {
+            group_id,
+            old_cycle,
+            new_cycle,
+            payout_executed,
+            defaulted,
+            advanced_at,
+        };
+        env.events().publish(("cycle_advanced",), event);
     }
 }
 
@@ -458,5 +490,32 @@ mod tests {
         let member = Address::generate(&env);
 
         EventEmitter::emit_member_left(&env, 1, member, 2, 1234567890);
+    }
+
+    #[test]
+    fn test_cycle_advanced_event() {
+        let env = Env::default();
+
+        let event = CycleAdvanced {
+            group_id: 1,
+            old_cycle: 0,
+            new_cycle: 1,
+            payout_executed: true,
+            defaulted: false,
+            advanced_at: 1234567890,
+        };
+
+        assert_eq!(event.group_id, 1);
+        assert_eq!(event.old_cycle, 0);
+        assert_eq!(event.new_cycle, 1);
+        assert!(event.payout_executed);
+        assert!(!event.defaulted);
+    }
+
+    #[test]
+    fn test_event_emitter_cycle_advanced() {
+        let env = Env::default();
+
+        EventEmitter::emit_cycle_advanced(&env, 1, 0, 1, true, false, 1234567890);
     }
 }
