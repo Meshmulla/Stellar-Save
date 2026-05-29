@@ -78,6 +78,32 @@ pub enum StellarSaveError {
     /// Error Code: 5002
     TokenTransferFailed = 5002,
 
+    /// The token address is not a valid Soroban token contract.
+    /// Error Code: 5003
+    InvalidTokenContract = 5003,
+
+    // Penalty-related errors (6000-6999)
+    /// The penalty rate is invalid (greater than 100%).
+    /// Error Code: 6001
+    InvalidPenaltyRate = 6001,
+
+    /// The member has missed too many contributions.
+    /// Error Code: 6002
+    TooManyMissedContributions = 6002,
+
+    // Upgrade-related errors (7000-7999)
+    /// The caller is not the contract admin.
+    /// Error Code: 7001
+    NotAdmin = 7001,
+
+    /// The WASM hash is invalid or empty.
+    /// Error Code: 7002
+    InvalidWasmHash = 7002,
+
+    /// The contract upgrade failed.
+    /// Error Code: 7003
+    UpgradeFailed = 7003,
+
     // System-related errors (9000-9999)
     /// An internal contract error occurred.
     /// Error Code: 9001
@@ -160,6 +186,28 @@ impl StellarSaveError {
             StellarSaveError::TokenTransferFailed => {
                 "The token transfer failed. Ensure the member has granted sufficient allowance to the contract."
             }
+            StellarSaveError::InvalidTokenContract => {
+                "The token address is not a valid Soroban token contract."
+            }
+
+            // Penalty-related errors
+            StellarSaveError::InvalidPenaltyRate => {
+                "The penalty rate is invalid. Must be between 0 and 100 percent."
+            }
+            StellarSaveError::TooManyMissedContributions => {
+                "The member has missed too many contributions and is no longer eligible."
+            }
+
+            // Upgrade-related errors
+            StellarSaveError::NotAdmin => {
+                "Only the contract admin can perform this operation."
+            }
+            StellarSaveError::InvalidWasmHash => {
+                "The provided WASM hash is invalid or empty."
+            }
+            StellarSaveError::UpgradeFailed => {
+                "The contract upgrade failed. Please check the WASM hash and try again."
+            }
 
             // System-related errors
             StellarSaveError::InternalError => {
@@ -195,7 +243,9 @@ impl StellarSaveError {
             2000..=2999 => ErrorCategory::Member,
             3000..=3999 => ErrorCategory::Contribution,
             4000..=4999 => ErrorCategory::Payout,
-            5000..=5999 => ErrorCategory::Template,
+            5000..=5999 => ErrorCategory::Token,
+            6000..=6999 => ErrorCategory::Penalty,
+            7000..=7999 => ErrorCategory::Upgrade,
             9000..=9999 => ErrorCategory::System,
             _ => ErrorCategory::Unknown,
         }
@@ -218,8 +268,14 @@ pub enum ErrorCategory {
     /// Errors related to payout operations.
     Payout,
 
-    /// Errors related to group template operations.
-    Template,
+    /// Errors related to token operations and validation.
+    Token,
+
+    /// Errors related to penalty system.
+    Penalty,
+
+    /// Errors related to contract upgrades.
+    Upgrade,
 
     /// System-level errors and internal failures.
     System,

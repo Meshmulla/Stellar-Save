@@ -50,7 +50,7 @@ pub use storage_optimization::{
 pub use storage_benchmark::{BenchmarkResult, BenchmarkScenario, StorageBenchmark};
 #[cfg(test)]
 use soroban_sdk::testutils::{Events, Ledger};
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, String, Symbol, Vec, Map, BytesN};
 pub use status::StatusError;
 pub use storage::{StorageKey, StorageKeyBuilder};
 
@@ -365,17 +365,28 @@ impl StellarSaveContract {
         contribution_amount: i128,
         cycle_duration: u64,
         max_members: u32,
-        token_address: Address,
+        token_address: Option<Address>,
+        penalty_rate: Option<u32>,
+        grace_period_seconds: Option<u64>,
     ) -> Result<u64, StellarSaveError> {
         // 1. Authorization: Only the creator can initiate this transaction
         creator.require_auth();
 
-        // 2. Validate grace period (max 7 days)
-        if grace_period_seconds > 604800 {
+        // 2. Set default values
+        let grace_period = grace_period_seconds.unwrap_or(0);
+        let penalty = penalty_rate.unwrap_or(0);
+
+        // 3. Validate grace period (max 7 days)
+        if grace_period > 604800 {
             return Err(StellarSaveError::InvalidState);
         }
 
-        // 3. Global Validation: Check against ContractConfig
+        // 4. Validate penalty rate (max 100%)
+        if penalty > 100 {
+            return Err(StellarSaveError::InvalidPenaltyRate);
+        }
+
+        // 5. Global Validation: Check against ContractConfig
         let config_key = StorageKeyBuilder::contract_config();
         if let Some(config) = env
             .storage()
@@ -393,28 +404,33 @@ impl StellarSaveContract {
             }
         }
 
-        // 3. Token allowlist check: if an allowlist is configured, verify token_address is present
-        let allowed_tokens_key = StorageKeyBuilder::allowed_tokens();
-        if let Some(allowed_tokens) = env
-            .storage()
-            .persistent()
-            .get::<_, soroban_sdk::Vec<Address>>(&allowed_tokens_key)
-        {
-            if !allowed_tokens.contains(&token_address) {
-                return Err(StellarSaveError::InvalidToken);
+        // 6. Token validation if provided
+        let mut token_decimals = 7; // Default for XLM
+        if let Some(ref token_addr) = token_address {
+            // Token allowlist check: if an allowlist is configured, verify token_address is present
+            let allowed_tokens_key = StorageKeyBuilder::allowed_tokens();
+            if let Some(allowed_tokens) = env
+                .storage()
+                .persistent()
+                .get::<_, soroban_sdk::Vec<Address>>(&allowed_tokens_key)
+            {
+                if !allowed_tokens.contains(token_addr) {
+                    return Err(StellarSaveError::InvalidToken);
+                }
             }
+
+            // Validate token via SEP-41 decimals() call
+            token_decimals = crate::token::validate_token(&env, token_addr)?;
         }
 
-        // 4. Validate token via SEP-41 decimals() call
-        let token_decimals = crate::token::validate_token(&env, &token_address)?;
-
-        // 5. Generate unique group ID
+        // 7. Generate unique group ID
         let group_id = Self::generate_next_group_id(&env)?;
 
-        // 6. Initialize Group Struct
+        // 8. Initialize Group Struct
         let current_time = env.ledger().timestamp();
         let min_members = 2; // Default minimum members
-        let new_group = Group::new(
+        let mut new_group = Group::new(
+            &env,
             group_id,
             creator.clone(),
             contribution_amount,
@@ -422,10 +438,14 @@ impl StellarSaveContract {
             max_members,
             min_members,
             current_time,
-            grace_period_seconds,
+            grace_period,
         );
 
-        // 7. Store Group Data
+        // Set optional fields
+        new_group.token_address = token_address.clone();
+        new_group.penalty_rate = penalty;
+
+        // 9. Store Group Data
         let group_key = StorageKeyBuilder::group_data(group_id);
         env.storage().persistent().set(&group_key, &new_group);
 
@@ -435,19 +455,21 @@ impl StellarSaveContract {
             .persistent()
             .set(&status_key, &GroupStatus::Pending);
 
-        // 8. Store TokenConfig for this group
-        let token_config = crate::group::TokenConfig {
-            token_address: token_address.clone(),
-            token_decimals,
-        };
-        let token_config_key = StorageKeyBuilder::group_token_config(group_id);
-        env.storage().persistent().set(&token_config_key, &token_config);
+        // 10. Store TokenConfig for this group if token is provided
+        if let Some(ref token_addr) = token_address {
+            let token_config = crate::group::TokenConfig {
+                token_address: token_addr.clone(),
+                token_decimals,
+            };
+            let token_config_key = StorageKeyBuilder::group_token_config(group_id);
+            env.storage().persistent().set(&token_config_key, &token_config);
+        }
 
-        // 9. Emit GroupCreated Event (include token_address as second data field)
+        // 11. Emit GroupCreated Event
         env.events()
-            .publish((Symbol::new(&env, "GroupCreated"), creator), (group_id, token_address));
+            .publish((Symbol::new(&env, "GroupCreated"), creator), (group_id, token_address.clone()));
 
-        // 10. Return Group ID
+        // 12. Return Group ID
         Ok(group_id)
     }
 
@@ -3297,6 +3319,243 @@ pub fn is_member(
 
         Ok(())
     }
+
+    // =========================================================================
+    // ISSUE #747: Contract Upgrade Mechanism
+    // =========================================================================
+
+    /// Initializes the contract admin. Can only be called once during deployment.
+    /// 
+    /// # Arguments
+    /// * `env` - Soroban environment
+    /// * `admin` - Address of the contract admin
+    /// 
+    /// # Returns
+    /// * `Ok(())` - Admin successfully set
+    /// * `Err(StellarSaveError::InvalidState)` - Admin already set
+    pub fn initialize_admin(env: Env, admin: Address) -> Result<(), StellarSaveError> {
+        admin.require_auth();
+
+        let admin_key = StorageKeyBuilder::admin();
+        
+        // Check if admin is already set
+        if env.storage().persistent().has(&admin_key) {
+            return Err(StellarSaveError::InvalidState);
+        }
+
+        // Set the admin
+        env.storage().persistent().set(&admin_key, &admin);
+        
+        Ok(())
+    }
+
+    /// Upgrades the contract to a new WASM hash. Only callable by admin.
+    /// 
+    /// # Arguments
+    /// * `env` - Soroban environment
+    /// * `new_wasm_hash` - Hash of the new WASM code
+    /// 
+    /// # Returns
+    /// * `Ok(())` - Upgrade successful
+    /// * `Err(StellarSaveError::NotAdmin)` - Caller is not admin
+    /// * `Err(StellarSaveError::InvalidWasmHash)` - Invalid WASM hash
+    /// * `Err(StellarSaveError::UpgradeFailed)` - Upgrade operation failed
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), StellarSaveError> {
+        // Get admin address
+        let admin_key = StorageKeyBuilder::admin();
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&admin_key)
+            .ok_or(StellarSaveError::NotAdmin)?;
+
+        // Require admin authorization
+        admin.require_auth();
+
+        // Validate WASM hash is not empty
+        if new_wasm_hash.to_array().iter().all(|&b| b == 0) {
+            return Err(StellarSaveError::InvalidWasmHash);
+        }
+
+        // Perform the upgrade
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash)
+            .map_err(|_| StellarSaveError::UpgradeFailed)?;
+
+        Ok(())
+    }
+
+    /// Gets the current admin address.
+    /// 
+    /// # Arguments
+    /// * `env` - Soroban environment
+    /// 
+    /// # Returns
+    /// * `Ok(Address)` - Current admin address
+    /// * `Err(StellarSaveError::NotAdmin)` - No admin set
+    pub fn get_admin(env: Env) -> Result<Address, StellarSaveError> {
+        let admin_key = StorageKeyBuilder::admin();
+        env.storage()
+            .persistent()
+            .get(&admin_key)
+            .ok_or(StellarSaveError::NotAdmin)
+    }
+
+    // =========================================================================
+    // ISSUE #746: Penalty Mechanism for Missed Contributions
+    // =========================================================================
+
+    /// Records a missed contribution and applies penalty.
+    /// 
+    /// # Arguments
+    /// * `env` - Soroban environment
+    /// * `group_id` - ID of the group
+    /// * `member` - Address of the member who missed contribution
+    /// * `cycle` - Cycle number where contribution was missed
+    /// 
+    /// # Returns
+    /// * `Ok(())` - Penalty applied successfully
+    /// * `Err(StellarSaveError::GroupNotFound)` - Group doesn't exist
+    /// * `Err(StellarSaveError::NotMember)` - Address is not a member
+    pub fn record_missed_contribution(
+        env: Env,
+        group_id: u64,
+        member: Address,
+        cycle: u32,
+    ) -> Result<(), StellarSaveError> {
+        // Load group
+        let group_key = StorageKeyBuilder::group_data(group_id);
+        let mut group: Group = env
+            .storage()
+            .persistent()
+            .get(&group_key)
+            .ok_or(StellarSaveError::GroupNotFound)?;
+
+        // Verify member exists
+        let member_key = StorageKeyBuilder::member_profile(group_id, member.clone());
+        if !env.storage().persistent().has(&member_key) {
+            return Err(StellarSaveError::NotMember);
+        }
+
+        // Update missed contributions count
+        let current_missed = group.missed_contributions.get(member.clone()).unwrap_or(0);
+        group.missed_contributions.set(member.clone(), current_missed + 1);
+
+        // Save updated group
+        env.storage().persistent().set(&group_key, &group);
+
+        // Calculate penalty amount
+        let penalty_amount = (group.contribution_amount * group.penalty_rate as i128) / 100;
+
+        // Emit ContributionMissed event
+        let timestamp = env.ledger().timestamp();
+        env.events().publish(
+            (Symbol::new(&env, "ContributionMissed"), member.clone()),
+            (group_id, cycle, penalty_amount, timestamp),
+        );
+
+        Ok(())
+    }
+
+    /// Gets the number of missed contributions for a member.
+    /// 
+    /// # Arguments
+    /// * `env` - Soroban environment
+    /// * `group_id` - ID of the group
+    /// * `member` - Address of the member
+    /// 
+    /// # Returns
+    /// * `Ok(u32)` - Number of missed contributions
+    /// * `Err(StellarSaveError::GroupNotFound)` - Group doesn't exist
+    /// * `Err(StellarSaveError::NotMember)` - Address is not a member
+    pub fn get_missed_contributions(
+        env: Env,
+        group_id: u64,
+        member: Address,
+    ) -> Result<u32, StellarSaveError> {
+        // Load group
+        let group_key = StorageKeyBuilder::group_data(group_id);
+        let group: Group = env
+            .storage()
+            .persistent()
+            .get(&group_key)
+            .ok_or(StellarSaveError::GroupNotFound)?;
+
+        // Verify member exists
+        let member_key = StorageKeyBuilder::member_profile(group_id, member.clone());
+        if !env.storage().persistent().has(&member_key) {
+            return Err(StellarSaveError::NotMember);
+        }
+
+        Ok(group.missed_contributions.get(member).unwrap_or(0))
+    }
+
+    /// Calculates the penalty-adjusted payout amount for a member.
+    /// 
+    /// # Arguments
+    /// * `env` - Soroban environment
+    /// * `group_id` - ID of the group
+    /// * `member` - Address of the member
+    /// * `base_amount` - Base payout amount before penalties
+    /// 
+    /// # Returns
+    /// * `Ok(i128)` - Penalty-adjusted payout amount
+    /// * `Err(StellarSaveError::GroupNotFound)` - Group doesn't exist
+    /// * `Err(StellarSaveError::NotMember)` - Address is not a member
+    pub fn calculate_penalty_adjusted_payout(
+        env: Env,
+        group_id: u64,
+        member: Address,
+        base_amount: i128,
+    ) -> Result<i128, StellarSaveError> {
+        // Load group
+        let group_key = StorageKeyBuilder::group_data(group_id);
+        let group: Group = env
+            .storage()
+            .persistent()
+            .get(&group_key)
+            .ok_or(StellarSaveError::GroupNotFound)?;
+
+        // Verify member exists
+        let member_key = StorageKeyBuilder::member_profile(group_id, member.clone());
+        if !env.storage().persistent().has(&member_key) {
+            return Err(StellarSaveError::NotMember);
+        }
+
+        // Get missed contributions count
+        let missed_count = group.missed_contributions.get(member).unwrap_or(0);
+        
+        // Calculate total penalty percentage
+        let total_penalty_rate = (missed_count * group.penalty_rate).min(100);
+        
+        // Calculate penalty amount
+        let penalty_amount = (base_amount * total_penalty_rate as i128) / 100;
+        
+        // Return adjusted amount
+        Ok(base_amount - penalty_amount)
+    }
+
+    // =========================================================================
+    // ISSUE #745: Token Validation Helper
+    // =========================================================================
+
+    /// Validates that a token address is a valid Soroban token contract.
+    /// 
+    /// # Arguments
+    /// * `env` - Soroban environment
+    /// * `token_address` - Address to validate
+    /// 
+    /// # Returns
+    /// * `Ok(())` - Token is valid
+    /// * `Err(StellarSaveError::InvalidTokenContract)` - Token is not valid
+    pub fn validate_token_contract(env: Env, token_address: Address) -> Result<(), StellarSaveError> {
+        // Try to call the decimals() function to verify it's a valid token contract
+        match crate::token::validate_token(&env, &token_address) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(StellarSaveError::InvalidTokenContract),
+        }
+    }
+}
 }
 
 /// Validates a string input (group name, description).

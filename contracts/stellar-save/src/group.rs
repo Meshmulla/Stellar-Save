@@ -1,5 +1,5 @@
 use core::fmt;
-use soroban_sdk::{contracttype, Address};
+use soroban_sdk::{contracttype, Address, Env, Map};
 
 /// Configuration for the token used by a savings group.
 ///
@@ -219,12 +219,26 @@ pub struct Group {
     /// Maximum allowed value is 604800 (7 days). Defaults to 0 (no grace period).
     pub grace_period_seconds: u64,
 
+    /// Optional token contract address for custom tokens (USDC, EURC, etc.).
+    /// If None, the group uses native XLM. If Some, contributions must be made
+    /// in the specified Stellar token contract.
+    pub token_address: Option<Address>,
+
+    /// Penalty rate as a percentage (0-100) applied to future payouts for missed contributions.
+    /// For example, penalty_rate of 5 means 5% penalty per missed contribution.
+    pub penalty_rate: u32,
+
+    /// Map tracking the number of missed contributions per member.
+    /// Key: member address, Value: number of missed contributions
+    pub missed_contributions: Map<Address, u32>,
+
 }
 
 impl Group {
     /// Creates a new Group with validation.
     ///
     /// # Arguments
+    /// * `env` - Soroban environment
     /// * `id` - Unique group identifier
     /// * `creator` - Address of the group creator
     /// * `contribution_amount` - Amount each member contributes per cycle (in stroops)
@@ -243,6 +257,7 @@ impl Group {
     /// - min_members must be <= max_members
     /// - grace_period_seconds must be <= 604800 (7 days)
     pub fn new(
+        env: &Env,
         id: u64,
         creator: Address,
         contribution_amount: i128,
@@ -253,6 +268,7 @@ impl Group {
         grace_period_seconds: u64,
     ) -> Self {
         Self::new_with_penalty(
+            env,
             id,
             creator,
             contribution_amount,
@@ -267,6 +283,7 @@ impl Group {
 
     /// Creates a new Group with penalty configuration.
     pub fn new_with_penalty(
+        env: &Env,
         id: u64,
         creator: Address,
         contribution_amount: i128,
@@ -318,12 +335,12 @@ impl Group {
             created_at,
             started: false,
             started_at: 0,
-
             require_contribution_proof: false,
             allow_dynamic_contributions: false,
-
             grace_period_seconds,
-
+            token_address: None,
+            penalty_rate: 0,
+            missed_contributions: Map::new(&env),
         }
     }
 

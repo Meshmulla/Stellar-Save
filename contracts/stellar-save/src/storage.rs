@@ -205,6 +205,10 @@ pub enum CounterKey {
     /// Allowed tokens list: COUNTER_ALLOWED_TOKENS
     /// Stores the optional admin-managed allowlist of permitted token addresses.
     AllowedTokens,
+
+    /// Contract admin address: COUNTER_ADMIN
+    /// Stores the admin address for upgrade operations.
+    Admin,
 }
 
 /// Utility functions for creating storage keys with consistent formatting.
@@ -391,6 +395,11 @@ impl StorageKeyBuilder {
     /// Creates a key storing the timestamp of a user's last group join action.
     pub fn user_last_join(user: Address) -> StorageKey {
         StorageKey::User(UserKey::LastGroupJoin(user))
+    }
+
+    /// Creates a key for storing the contract admin address.
+    pub fn admin() -> StorageKey {
+        StorageKey::Counter(CounterKey::Admin)
     }
 }
 
