@@ -1921,6 +1921,100 @@ impl StellarSaveContract {
         payout_executor::execute_payout(env, group_id)
     }
 
+    /// Advances the cycle if the deadline has passed, enabling trustless automation.
+    /// Anyone can call this function to advance a group's cycle when the deadline is reached.
+    /// 
+    /// # Arguments
+    /// * `env` - Soroban environment
+    /// * `group_id` - ID of the group to advance
+    /// 
+    /// # Returns
+    /// * `Ok(())` - Cycle advanced successfully
+    /// * `Err(StellarSaveError)` - Various error conditions:
+    ///   - `GroupNotFound` - Group doesn't exist
+    ///   - `InvalidState` - Group not in active state or already complete
+    ///   - `DeadlineNotReached` - Cycle deadline has not yet passed
+    /// 
+    /// # Behavior
+    /// - Checks if current cycle deadline has passed using `env.ledger().timestamp()`
+    /// - If all contributions received: executes payout and advances to next cycle
+    /// - If contributions missing: marks cycle as defaulted and advances to next cycle
+    /// - Emits `CycleAdvanced` event with old/new cycle numbers and execution status
+    /// - Completes group if all cycles are finished
+    pub fn tick(env: Env, group_id: u64) -> Result<(), StellarSaveError> {
+        // 1. Load group from storage
+        let group_key = StorageKeyBuilder::group_data(group_id);
+        let mut group = env
+            .storage()
+            .persistent()
+            .get::<_, Group>(&group_key)
+            .ok_or(StellarSaveError::GroupNotFound)?;
+
+        // 2. Verify group is in valid state for ticking
+        if !group.is_active || group.is_complete() {
+            return Err(StellarSaveError::InvalidState);
+        }
+
+        // 3. Check if cycle deadline has passed
+        let current_time = env.ledger().timestamp();
+        if !crate::helpers::is_cycle_deadline_passed(&group, current_time) {
+            return Err(StellarSaveError::DeadlineNotReached);
+        }
+
+        // 4. Store old cycle for event emission
+        let old_cycle = group.current_cycle;
+        let mut payout_executed = false;
+        let mut defaulted = false;
+
+        // 5. Check if cycle is complete (all contributions received)
+        let cycle_complete = Self::is_cycle_complete(env.clone(), group_id)?;
+        
+        if cycle_complete {
+            // 5a. Execute payout if cycle is complete
+            match Self::execute_payout(env.clone(), group_id) {
+                Ok(()) => {
+                    payout_executed = true;
+                }
+                Err(_) => {
+                    // If payout fails, still advance cycle but mark as defaulted
+                    defaulted = true;
+                }
+            }
+        } else {
+            // 5b. Mark cycle as defaulted if contributions are missing
+            defaulted = true;
+        }
+
+        // 6. Advance the cycle
+        group.advance_cycle(&env);
+        let new_cycle = group.current_cycle;
+
+        // 7. Update group storage
+        env.storage().persistent().set(&group_key, &group);
+
+        // 8. Emit CycleAdvanced event
+        crate::events::EventEmitter::emit_cycle_advanced(
+            &env,
+            group_id,
+            old_cycle,
+            new_cycle,
+            payout_executed,
+            defaulted,
+            current_time,
+        );
+
+        // 9. If group is now complete, emit completion event
+        if group.is_complete() {
+            let total_distributed = Self::get_total_paid_out(env.clone(), group_id).unwrap_or(0);
+            crate::events::EventEmitter::emit_group_completed(
+                &env,
+                group_id,
+                group.creator.clone(),
+                group.max_members,
+                total_distributed,
+                current_time,
+            );
+        }
     /// Submits a bid for the current payout cycle in a `Bid`-order group.
     ///
     /// The member with the highest bid at payout time wins the cycle payout.
@@ -1976,6 +2070,9 @@ impl StellarSaveContract {
         Ok(())
     }
 
+    // ============================================================================
+    // ISSUE #425: Group Status Management
+    // ============================================================================
     /// Returns true if the group is currently paused.
     ///
     /// Reads the group from storage and checks the paused flag / status.
@@ -14492,5 +14589,287 @@ mod tests {
         for i in 0..10 {
             assert_eq!(groups.get(i).unwrap(), expected_groups.get(i).unwrap());
         }
+    }
+
+    // ============================================================================
+    // TICK FUNCTION TESTS
+    // ============================================================================
+
+    #[test]
+    fn test_tick_group_not_found() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(StellarSaveContract, ());
+        let client = StellarSaveContractClient::new(&env, &contract_id);
+
+        let result = client.try_tick(&999);
+        assert_eq!(result, Err(Ok(StellarSaveError::GroupNotFound)));
+    }
+
+    #[test]
+    fn test_tick_group_not_active() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(StellarSaveContract, ());
+        let client = StellarSaveContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let group_id = client.create_group(
+            &creator,
+            &10_000_000,
+            &604800,
+            &3,
+            &2,
+        );
+
+        // Group is not active yet (no members joined)
+        let result = client.try_tick(&group_id);
+        assert_eq!(result, Err(Ok(StellarSaveError::InvalidState)));
+    }
+
+    #[test]
+    fn test_tick_deadline_not_reached() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(StellarSaveContract, ());
+        let client = StellarSaveContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let member = Address::generate(&env);
+
+        // Set initial time
+        env.ledger().set_timestamp(1000);
+
+        let group_id = client.create_group(
+            &creator,
+            &10_000_000,
+            &604800, // 1 week cycle
+            &2,
+            &2,
+        );
+
+        client.join_group(&group_id, &creator);
+        client.join_group(&group_id, &member);
+        client.activate_group(&group_id, &creator, &2);
+
+        // Try to tick before deadline (1000 + 604800 = 605800)
+        env.ledger().set_timestamp(500000); // Still before deadline
+        let result = client.try_tick(&group_id);
+        assert_eq!(result, Err(Ok(StellarSaveError::DeadlineNotReached)));
+    }
+
+    #[test]
+    fn test_tick_cycle_complete_with_payout() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(StellarSaveContract, ());
+        let client = StellarSaveContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let member = Address::generate(&env);
+
+        // Set initial time
+        env.ledger().set_timestamp(1000);
+
+        let group_id = client.create_group(
+            &creator,
+            &10_000_000,
+            &604800, // 1 week cycle
+            &2,
+            &2,
+        );
+
+        client.join_group(&group_id, &creator);
+        client.join_group(&group_id, &member);
+        client.activate_group(&group_id, &creator, &2);
+
+        // Assign payout positions
+        let positions = vec![&env, creator.clone(), member.clone()];
+        client.assign_payout_positions(&group_id, &creator, &positions, &0);
+
+        // Both members contribute
+        client.contribute(&group_id, &creator, &10_000_000);
+        client.contribute(&group_id, &member, &10_000_000);
+
+        // Move past deadline
+        env.ledger().set_timestamp(1000 + 604800 + 1);
+
+        // Tick should execute payout and advance cycle
+        let result = client.tick(&group_id);
+        assert!(result.is_ok());
+
+        // Verify cycle advanced
+        let group = client.get_group(&group_id);
+        assert_eq!(group.current_cycle, 1);
+    }
+
+    #[test]
+    fn test_tick_cycle_incomplete_defaulted() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(StellarSaveContract, ());
+        let client = StellarSaveContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let member = Address::generate(&env);
+
+        // Set initial time
+        env.ledger().set_timestamp(1000);
+
+        let group_id = client.create_group(
+            &creator,
+            &10_000_000,
+            &604800, // 1 week cycle
+            &2,
+            &2,
+        );
+
+        client.join_group(&group_id, &creator);
+        client.join_group(&group_id, &member);
+        client.activate_group(&group_id, &creator, &2);
+
+        // Only one member contributes
+        client.contribute(&group_id, &creator, &10_000_000);
+        // member doesn't contribute
+
+        // Move past deadline
+        env.ledger().set_timestamp(1000 + 604800 + 1);
+
+        // Tick should advance cycle without payout (defaulted)
+        let result = client.tick(&group_id);
+        assert!(result.is_ok());
+
+        // Verify cycle advanced
+        let group = client.get_group(&group_id);
+        assert_eq!(group.current_cycle, 1);
+    }
+
+    #[test]
+    fn test_tick_completes_group() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(StellarSaveContract, ());
+        let client = StellarSaveContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let member = Address::generate(&env);
+
+        // Set initial time
+        env.ledger().set_timestamp(1000);
+
+        let group_id = client.create_group(
+            &creator,
+            &10_000_000,
+            &604800, // 1 week cycle
+            &2,      // 2 members = 2 cycles total
+            &2,
+        );
+
+        client.join_group(&group_id, &creator);
+        client.join_group(&group_id, &member);
+        client.activate_group(&group_id, &creator, &2);
+
+        // Assign payout positions
+        let positions = vec![&env, creator.clone(), member.clone()];
+        client.assign_payout_positions(&group_id, &creator, &positions, &0);
+
+        // Complete cycle 0
+        client.contribute(&group_id, &creator, &10_000_000);
+        client.contribute(&group_id, &member, &10_000_000);
+        env.ledger().set_timestamp(1000 + 604800 + 1);
+        client.tick(&group_id);
+
+        // Complete cycle 1 (final cycle)
+        client.contribute(&group_id, &creator, &10_000_000);
+        client.contribute(&group_id, &member, &10_000_000);
+        env.ledger().set_timestamp(1000 + 604800 * 2 + 1);
+        client.tick(&group_id);
+
+        // Verify group is complete
+        let group = client.get_group(&group_id);
+        assert!(group.is_complete());
+        assert_eq!(group.current_cycle, 2);
+    }
+
+    #[test]
+    fn test_tick_already_complete_group() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(StellarSaveContract, ());
+        let client = StellarSaveContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+
+        let group_id = client.create_group(
+            &creator,
+            &10_000_000,
+            &604800,
+            &1, // 1 member = completes after 1 cycle
+            &1,
+        );
+
+        client.join_group(&group_id, &creator);
+        client.activate_group(&group_id, &creator, &1);
+
+        // Assign payout positions
+        let positions = vec![&env, creator.clone()];
+        client.assign_payout_positions(&group_id, &creator, &positions, &0);
+
+        // Complete the single cycle
+        client.contribute(&group_id, &creator, &10_000_000);
+        env.ledger().set_timestamp(1000 + 604800 + 1);
+        client.tick(&group_id);
+
+        // Try to tick again on completed group
+        env.ledger().set_timestamp(1000 + 604800 * 2 + 1);
+        let result = client.try_tick(&group_id);
+        assert_eq!(result, Err(Ok(StellarSaveError::InvalidState)));
+    }
+
+    #[test]
+    fn test_tick_emits_cycle_advanced_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(StellarSaveContract, ());
+        let client = StellarSaveContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let member = Address::generate(&env);
+
+        // Set initial time
+        env.ledger().set_timestamp(1000);
+
+        let group_id = client.create_group(
+            &creator,
+            &10_000_000,
+            &604800,
+            &2,
+            &2,
+        );
+
+        client.join_group(&group_id, &creator);
+        client.join_group(&group_id, &member);
+        client.activate_group(&group_id, &creator, &2);
+
+        // Assign payout positions
+        let positions = vec![&env, creator.clone(), member.clone()];
+        client.assign_payout_positions(&group_id, &creator, &positions, &0);
+
+        // Both members contribute
+        client.contribute(&group_id, &creator, &10_000_000);
+        client.contribute(&group_id, &member, &10_000_000);
+
+        // Move past deadline and tick
+        env.ledger().set_timestamp(1000 + 604800 + 1);
+        client.tick(&group_id);
+
+        // Verify CycleAdvanced event was emitted
+        let events = env.events().all();
+        let cycle_advanced_events: Vec<_> = events
+            .iter()
+            .filter(|e| e.0.contains(&"cycle_advanced"))
+            .collect();
+        
+        assert_eq!(cycle_advanced_events.len(), 1);
     }
 }
