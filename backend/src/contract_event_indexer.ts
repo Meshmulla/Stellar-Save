@@ -1,6 +1,7 @@
 import { Horizon } from '@stellar/stellar-sdk';
 import { PrismaClient } from './generated/prisma/client';
 import { WebPushService } from './web_push_service';
+import { eventsIndexedTotal, sorobanRpcCallsTotal } from './metrics';
 
 // Event types emitted by the Stellar savings contract
 const PAYOUT_EVENT_TYPES = ['payout', 'payout_received', 'payoutreceived', 'payout_processed'];
@@ -42,7 +43,6 @@ export class ContractEventIndexer {
   constructor(horizonUrl: string, contractId: string, databaseUrl: string, webPush?: WebPushService) {
     this.server = new Horizon.Server(horizonUrl);
     this.contractId = contractId;
-    // Set the database URL in environment for Prisma
     process.env.DATABASE_URL = databaseUrl;
     this.prisma = new (PrismaClient as any)();
     this.webPush = webPush;
@@ -58,43 +58,93 @@ export class ContractEventIndexer {
     console.log('Starting contract event indexer...');
 
     try {
-      // Get the latest ledger if not provided
-      let startLedger = lastLedger;
-      if (!startLedger) {
-        const latestLedger = await this.server.ledgers().order('desc').limit(1).call();
-        startLedger = latestLedger.records[0].sequence;
-      }
-
-      // Start streaming events
-      this.streamEvents(startLedger!);
+      const startLedger = lastLedger ?? await this.loadStartLedger();
+      this.streamEvents(startLedger).catch(err => {
+        console.error('Fatal error in stream loop:', err);
+        this.isRunning = false;
+      });
     } catch (error) {
       console.error('Error starting indexer:', error);
       this.isRunning = false;
     }
   }
 
-  private async streamEvents(startLedger: number) {
-    let cursor = startLedger.toString();
+  async stop() {
+    this.isRunning = false;
+    await this.prisma.$disconnect();
+    console.log('Indexer stopped');
+  }
+
+  async getEvents(options: {
+    contractId?: string;
+    eventType?: string;
+    startLedger?: number;
+    endLedger?: number;
+    startTime?: Date;
+    endTime?: Date;
+    limit?: number;
+    offset?: number;
+  }) {
+    const where: any = {};
+
+    if (options.contractId) where.contractId = options.contractId;
+    if (options.eventType) where.eventType = options.eventType;
+    if (options.startLedger || options.endLedger) {
+      where.ledgerSeq = {};
+      if (options.startLedger) where.ledgerSeq.gte = options.startLedger;
+      if (options.endLedger) where.ledgerSeq.lte = options.endLedger;
+    }
+    if (options.startTime || options.endTime) {
+      where.timestamp = {};
+      if (options.startTime) where.timestamp.gte = options.startTime;
+      if (options.endTime) where.timestamp.lte = options.endTime;
+    }
+
+    const limit = options.limit ?? 50;
+    const offset = options.offset ?? 0;
+
+    const [events, total] = await Promise.all([
+      this.prisma.contractEvent.findMany({
+        where,
+        orderBy: { timestamp: 'desc' },
+        take: limit,
+        skip: offset,
+      }),
+      this.prisma.contractEvent.count({ where }),
+    ]);
+
+    return { events, total, limit, offset };
+  }
+
+  // ── Private helpers ──────────────────────────────────────────────────────────
+
+  private async streamEvents(startLedger: number): Promise<void> {
+    const stored = await this.loadCursorRecord();
+    // Use the persisted paging token if available; otherwise fall back to the
+    // startLedger sequence number (Horizon accepts ledger seq as a cursor).
+    let cursor: string = stored?.lastCursor || String(startLedger);
+
+    console.log(`[ContractEventIndexer] Starting from cursor=${cursor}`);
 
     while (this.isRunning) {
       try {
-        // Use the Horizon REST API directly for events
         const url = new URL('/events', this.server.serverURL.toString());
         url.searchParams.set('contract', this.contractId);
-        url.searchParams.set('cursor', cursor);
+        url.searchParams.set('startLedger', cursor);
         url.searchParams.set('order', 'asc');
-        url.searchParams.set('limit', '200');
+        url.searchParams.set('limit', String(PAGE_LIMIT));
 
         const response = await fetch(url.toString());
+        sorobanRpcCallsTotal.inc({ method: 'getEvents', status: response.ok ? 'success' : 'error' });
         if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+          throw new Error(`HTTP ${response.status} from ${url}`);
         }
 
         const data: any = await response.json();
+        const records: any[] = data._embedded?.records ?? [];
 
-        if (!data._embedded || data._embedded.records.length === 0) {
-          // No new events, wait before checking again
-          await this.delay(5000); // 5 seconds
+        if (records.length === 0) {
+          await this.delay(POLL_INTERVAL_MS);
           continue;
         }
 
@@ -106,13 +156,57 @@ export class ContractEventIndexer {
         // Update cursor to the last processed event
         cursor = data._embedded.records[data._embedded.records.length - 1].paging_token;
       } catch (error) {
-        console.error('Error streaming events:', error);
-        await this.delay(10000); // Wait 10 seconds on error
+        console.error('[ContractEventIndexer] Poll error:', error);
+        await this.delay(ERROR_BACKOFF_MS);
       }
     }
   }
 
-  private async storeEventFromHorizon(event: any) {
+  /** Load the persisted cursor for this contract, returning null if none stored. */
+  private async loadCursorRecord(): Promise<{ lastCursor: string; lastLedger: number } | null> {
+    try {
+      const row = await (this.prisma as any).sorobanEventCursor.findUnique({
+        where: { contractId: this.contractId },
+        select: { lastCursor: true, lastLedger: true },
+      });
+      return row ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Determine which ledger to start from when no explicit ledger is provided:
+   * - Use the persisted lastLedger if available
+   * - Otherwise fall back to the current chain tip
+   */
+  private async loadStartLedger(): Promise<number> {
+    const stored = await this.loadCursorRecord();
+    if (stored && stored.lastLedger > 0) {
+      console.log(`[ContractEventIndexer] Resuming from persisted ledger ${stored.lastLedger}`);
+      return stored.lastLedger;
+    }
+
+    const latestLedger = await this.server.ledgers().order('desc').limit(1).call();
+    const seq: number = latestLedger.records[0].sequence;
+    console.log(`[ContractEventIndexer] No prior cursor; starting from current tip ledger ${seq}`);
+    return seq;
+  }
+
+  /** Persist the latest cursor/ledger so polling can resume after a restart. */
+  private async persistCursor(lastCursor: string, lastLedger: number): Promise<void> {
+    try {
+      await (this.prisma as any).sorobanEventCursor.upsert({
+        where: { contractId: this.contractId },
+        update: { lastCursor, lastLedger },
+        create: { contractId: this.contractId, lastCursor, lastLedger },
+      });
+    } catch (err) {
+      console.error('[ContractEventIndexer] Failed to persist cursor:', err);
+    }
+  }
+
+  private async storeEvent(event: any): Promise<void> {
     try {
       const stored = await this.prisma.contractEvent.create({
         data: {
@@ -127,6 +221,7 @@ export class ContractEventIndexer {
         },
       });
       console.log(`Stored event: ${event.type} in ledger ${event.ledger}`);
+      eventsIndexedTotal.inc({ event_type: event.type || 'unknown' });
 
       // Deliver signed webhook notifications for group events
       const webhookEvent = this.mapToWebhookEvent(stored.eventType);
@@ -151,7 +246,7 @@ export class ContractEventIndexer {
         }
       }
     } catch (error) {
-      console.error('Error storing event:', error);
+      console.error('[ContractEventIndexer] Error storing event:', error);
     }
   }
 

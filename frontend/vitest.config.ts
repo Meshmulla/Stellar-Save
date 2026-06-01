@@ -24,5 +24,14 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
+    coverage: {
+      include: ['src/components/GroupCard.tsx', 'src/components/ContributionFlow.tsx', 'src/components/TransactionHistory.tsx'],
+      thresholds: {
+        lines: 80,
+        functions: 80,
+        branches: 70,
+        statements: 80,
+      },
+    },
   },
 });
