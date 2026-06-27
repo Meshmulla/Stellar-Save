@@ -42,3 +42,35 @@ output "blue_green_deployment_config" {
   description = "Blue-green deployment configuration summary"
   value       = module.codedeploy.blue_green_deployment_info
 }
+
+# ── Multi-region routing outputs ──────────────────────────────────────────────
+output "multi_region_enabled" {
+  description = "Whether multi-region routing is enabled"
+  value       = var.enable_multi_region
+}
+
+output "multi_region_routing_record" {
+  description = "FQDN clients use to reach the nearest/healthiest region"
+  value       = var.enable_multi_region ? module.multi_region[0].routing_record_name : ""
+}
+
+output "multi_region_failover_record" {
+  description = "Explicit PRIMARY/SECONDARY failover record name"
+  value       = var.enable_multi_region ? module.multi_region[0].failover_record_name : ""
+}
+
+output "multi_region_health_check_ids" {
+  description = "Route53 health check IDs per region"
+  value       = var.enable_multi_region ? module.multi_region[0].health_check_ids : {}
+}
+
+# ── Cross-region read replica outputs ─────────────────────────────────────────
+output "rds_read_replica_endpoint" {
+  description = "Cross-region read replica endpoint (empty when disabled)"
+  value       = module.rds_read_replica.replica_endpoint
+}
+
+output "rds_read_replica_arn" {
+  description = "Cross-region read replica ARN (empty when disabled)"
+  value       = module.rds_read_replica.replica_arn
+}

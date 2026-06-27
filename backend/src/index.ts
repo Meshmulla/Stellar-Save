@@ -1,3 +1,10 @@
+// ── Distributed tracing ───────────────────────────────────────────────────────
+// MUST be the very first import so OpenTelemetry can patch instrumented libraries
+// (express, http, pg, ioredis, …) before they are required. No-op when tracing
+// is disabled (the default).
+import { startTracing } from './tracing';
+startTracing();
+
 import fs from 'fs';
 import http2 from 'http2';
 import dotenv from 'dotenv';
