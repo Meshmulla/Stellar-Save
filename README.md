@@ -139,6 +139,8 @@ Follow the step-by-step guide in [demo/demo-script.md](demo/demo-script.md)
 - [Frequently Asked Questions (FAQ)](docs/faq.md)
 - [Mobile App User Guide](docs/mobile-app-guide.md)
 - [Troubleshooting Guide](docs/troubleshooting.md)
+- [Changelog](CHANGELOG.md)
+- [Release Notes Process](docs/changelog.md)
 
 ## 🎓 Smart Contract API
 
