@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { Box, CircularProgress } from "@mui/material";
+import { FeedbackWidget } from "./components/FeedbackWidget";
 import "./App.css";
 import { useOfflineSyncInit } from "./hooks/useOfflineSync";
 
@@ -9,14 +10,7 @@ const AppRouter = lazy(() =>
 
 function RouteLoadingFallback() {
   return (
-    <Box
-      sx={{
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        minHeight: "100vh",
-      }}
-    >
+    <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh" }}>
       <CircularProgress />
     </Box>
   );
@@ -27,8 +21,11 @@ export default function App() {
   useOfflineSyncInit();
 
   return (
-    <Suspense fallback={<RouteLoadingFallback />}>
-      <AppRouter />
-    </Suspense>
+    <>
+      <Suspense fallback={<RouteLoadingFallback />}>
+        <AppRouter />
+      </Suspense>
+      <FeedbackWidget />
+    </>
   );
 }
