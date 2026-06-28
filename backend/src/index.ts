@@ -47,6 +47,7 @@ import { errorMiddleware, notFoundMiddleware } from './lib/errorMiddleware';
 import { AuditEventLog, auditMiddleware, createAuditRouter } from './audit_event_log';
 import { initWebSocketGateway } from './ws_gateway';
 import { initReconciliationService } from './reconciliation_service';
+import docsRouter from './docs';
 
 const CSP_POLICY = [
   "default-src 'self'",
@@ -252,6 +253,9 @@ const services = { engine, abTest, exportService, backupService, backupScheduler
 
 // ── Auth routes (public — no JWT required) ───────────────────────────────────
 app.use('/api/auth', createAuthRouter());
+
+// ── API Documentation routes ──────────────────────────────────────────────────
+app.use(docsRouter);
 
 // ── User routes (JWT protected) ───────────────────────────────────────────────
 app.use('/api/user', createUserRouter());
