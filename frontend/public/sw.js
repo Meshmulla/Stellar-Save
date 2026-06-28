@@ -2,28 +2,19 @@
  * sw.js — Stellar Save Service Worker
  *
  * Handles:
- *  1. PWA caching:
- *       - cache-first for static assets (stored in a runtime cache, pruned)
- *       - stale-while-revalidate for GET /api/ responses (separate API cache)
- *       - network-first navigations with cached-shell / offline.html fallback
- *  2. Offline fallback page + read-only operation from cached data
- *  3. Cache invalidation on version bumps (purges ALL stale caches)
- *  4. Background push events (Web Push API)
- *  5. Scheduled contribution reminder alarms via postMessage
- *  6. Notification click → focus/open app and navigate to group detail
+ *  1. PWA caching (cache-first for static assets, network-first for API)
+ *  2. Offline fallback page
+ *  3. Background push events (Web Push API)
+ *  4. Scheduled contribution reminder alarms via postMessage
+ *  5. Notification click → focus/open app and navigate to group detail
+ *  6. Background sync for offline actions
  */
 
-// ─── Versioning ──────────────────────────────────────────────────────────────
-// Bump SW_VERSION on every release so the activate handler purges every cache
-// (static, runtime, api) that does not belong to the current version.
-const SW_VERSION = 'v2';
-const STATIC_CACHE = `stellar-save-static-${SW_VERSION}`;
-const RUNTIME_CACHE = `stellar-save-runtime-${SW_VERSION}`;
-const API_CACHE = `stellar-save-api-${SW_VERSION}`;
-const CURRENT_CACHES = [STATIC_CACHE, RUNTIME_CACHE, API_CACHE];
-
+const CACHE_NAME = 'stellar-save-v2';
 const STATIC_ASSETS = ['/', '/offline.html', '/manifest.json', '/vite.svg'];
 const APP_ORIGIN = self.location.origin;
+const API_CACHE = 'stellar-save-api-v2';
+const API_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
 // Cap the runtime cache so it cannot grow without bound.
 const RUNTIME_MAX_ENTRIES = 60;
@@ -64,7 +55,9 @@ self.addEventListener('activate', (event) => {
       .keys()
       .then((keys) =>
         Promise.all(
-          keys.filter((k) => !CURRENT_CACHES.includes(k)).map((k) => caches.delete(k))
+          keys
+            .filter((k) => k !== CACHE_NAME && k !== API_CACHE)
+            .map((k) => caches.delete(k))
         )
       )
       .then(() => self.clients.claim())
@@ -80,9 +73,59 @@ self.addEventListener('fetch', (event) => {
   // Only handle same-origin GET requests.
   if (request.method !== 'GET' || url.origin !== APP_ORIGIN) return;
 
-  // API calls: stale-while-revalidate (serve cache instantly, refresh in bg).
+  // API calls: network-first with cache fallback
   if (url.pathname.startsWith('/api/')) {
-    event.respondWith(staleWhileRevalidate(event, request));
+    event.respondWith(
+      caches.open(API_CACHE).then((cache) =>
+        fetch(request)
+          .then((response) => {
+            // Cache successful responses
+            if (response && response.status === 200) {
+              const responseClone = response.clone();
+              // Add timestamp header for cache expiration
+              const headers = new Headers(responseClone.headers);
+              headers.set('X-Cache-Time', Date.now().toString());
+              const cachedResponse = new Response(responseClone.body, {
+                status: responseClone.status,
+                statusText: responseClone.statusText,
+                headers,
+              });
+              cache.put(request, cachedResponse);
+            }
+            return response;
+          })
+          .catch(async () => {
+            // Try cache on network failure
+            const cached = await cache.match(request);
+            if (cached) {
+              // Check if cache is still fresh
+              const cacheTime = cached.headers.get('X-Cache-Time');
+              if (cacheTime) {
+                const age = Date.now() - parseInt(cacheTime, 10);
+                if (age < API_CACHE_DURATION) {
+                  return cached;
+                }
+              }
+              // Return stale cache with warning header
+              const headers = new Headers(cached.headers);
+              headers.set('X-Cache-Stale', 'true');
+              return new Response(cached.body, {
+                status: cached.status,
+                statusText: cached.statusText,
+                headers,
+              });
+            }
+            // No cache available
+            return new Response(
+              JSON.stringify({ error: 'offline', message: 'Network unavailable' }),
+              {
+                status: 503,
+                headers: { 'Content-Type': 'application/json' },
+              }
+            );
+          })
+      )
+    );
     return;
   }
 
@@ -127,36 +170,19 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
-// ─── Strategy: stale-while-revalidate for API GETs ───────────────────────────
-async function staleWhileRevalidate(event, request) {
-  const cache = await caches.open(API_CACHE);
-  const cached = await cache.match(request);
-
-  // Kick off a background refresh regardless of cache hit.
-  const networkFetch = fetch(request)
-    .then((res) => {
-      if (res && res.status === 200) {
-        cache.put(request, res.clone());
-      }
-      return res;
-    })
-    .catch(() => null);
-
-  // Cache hit: return immediately, keep the SW alive for the bg refresh.
-  if (cached) {
-    event.waitUntil(networkFetch);
-    return cached;
+// ─── Background Sync ──────────────────────────────────────────────────────────
+self.addEventListener('sync', (event) => {
+  if (event.tag === 'sync-offline-actions') {
+    event.waitUntil(
+      // Notify all clients to trigger sync
+      self.clients.matchAll().then((clients) => {
+        clients.forEach((client) => {
+          client.postMessage({ type: 'SYNC_REQUESTED' });
+        });
+      })
+    );
   }
-
-  // Cache miss: await the network, fall back to an offline JSON sentinel.
-  const networkRes = await networkFetch;
-  if (networkRes) return networkRes;
-
-  return new Response(JSON.stringify({ error: 'offline' }), {
-    status: 503,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
+});
 
 // ─── Push Event ──────────────────────────────────────────────────────────────
 self.addEventListener('push', (event) => {
@@ -201,6 +227,18 @@ self.addEventListener('message', (event) => {
 
   if (event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
+  }
+
+  if (event.data.type === 'SYNC_NOW') {
+    // Register background sync
+    self.registration.sync
+      .register('sync-offline-actions')
+      .then(() => {
+        console.log('[SW] Background sync registered');
+      })
+      .catch((err) => {
+        console.error('[SW] Background sync registration failed:', err);
+      });
   }
 });
 
