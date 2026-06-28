@@ -59,109 +59,48 @@ variable "error_rate_threshold" {
   default     = 10
 }
 
-# ── RDS module wiring (referenced by main.tf) ─────────────────────────────────
+# ── Cost allocation ───────────────────────────────────────────────────────────
+
+variable "monthly_budget_usd" {
+  description = "Total monthly AWS budget cap for this environment in USD"
+  type        = number
+  default     = 500
+}
+
+variable "budget_alert_emails" {
+  description = "Email addresses to notify when a budget threshold is crossed"
+  type        = list(string)
+  default     = []
+}
+
 variable "vpc_id" {
-  description = "VPC ID for the primary-region RDS instance"
+  description = "VPC ID (referenced by RDS and ECS modules)"
   type        = string
   default     = ""
 }
 
 variable "private_subnet_ids" {
-  description = "Private subnet IDs for the primary-region RDS subnet group"
+  description = "Private subnet IDs for RDS and ECS"
   type        = list(string)
   default     = []
 }
 
 variable "backend_security_group_ids" {
-  description = "Security group IDs allowed to reach the primary-region RDS instance"
+  description = "Security group IDs for the backend ECS tasks"
   type        = list(string)
   default     = []
 }
 
 variable "db_username" {
-  description = "Master DB username"
+  description = "Master RDS username"
   type        = string
-  default     = ""
   sensitive   = true
+  default     = ""
 }
 
 variable "db_password" {
-  description = "Master DB password"
+  description = "Master RDS password"
   type        = string
-  default     = ""
   sensitive   = true
-}
-
-# ── Multi-region failover & geo-routing (additive, default single-region) ─────
-variable "enable_multi_region" {
-  description = "Enable Route53 multi-region geo/latency routing with health-check failover. Defaults false (single region)."
-  type        = bool
-  default     = false
-}
-
-variable "secondary_aws_region" {
-  description = "Secondary AWS region for failover/replica resources. Defaults to the primary region so single-region plans are valid."
-  type        = string
-  default     = "us-east-1"
-}
-
-variable "hosted_zone_id" {
-  description = "Route53 hosted zone ID for the application domain (required when enable_multi_region = true)."
-  type        = string
-  default     = ""
-}
-
-variable "routing_record_name" {
-  description = "FQDN that latency/geo routing resolves to (e.g. api.stellar-save.app)."
-  type        = string
-  default     = "api.stellar-save.app"
-}
-
-variable "routing_policy" {
-  description = "Multi-region routing policy: 'latency' or 'geolocation'."
-  type        = string
-  default     = "latency"
-}
-
-variable "primary_endpoint_domain" {
-  description = "ALB/CloudFront endpoint domain in the primary region."
-  type        = string
-  default     = ""
-}
-
-variable "secondary_endpoint_domain" {
-  description = "ALB/CloudFront endpoint domain in the secondary region."
-  type        = string
-  default     = ""
-}
-
-# ── Cross-region RDS read replica (additive, default disabled) ────────────────
-variable "enable_cross_region_replica" {
-  description = "Create a read-only RDS replica in the secondary region. Defaults false."
-  type        = bool
-  default     = false
-}
-
-variable "replica_vpc_id" {
-  description = "VPC ID in the secondary region for the read replica."
-  type        = string
-  default     = ""
-}
-
-variable "replica_subnet_ids" {
-  description = "Private subnet IDs in the secondary region for the read replica subnet group."
-  type        = list(string)
-  default     = []
-}
-
-variable "replica_security_group_ids" {
-  description = "Security group IDs in the secondary region allowed to reach the read replica."
-  type        = list(string)
-  default     = []
-}
-
-variable "replica_kms_key_id" {
-  description = "KMS key (in the secondary region) used to encrypt the read replica's storage. Empty uses the region default RDS key."
-  type        = string
   default     = ""
 }
