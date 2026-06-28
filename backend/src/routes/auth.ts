@@ -1,15 +1,7 @@
-import { Router, Request, Response } from 'express';
-import {
-  generateChallenge,
-  verifySignature,
-  issueJwt,
-  issueRefreshToken,
-  rotateRefreshToken,
-  revokeSession,
-  revokeAllSessions,
-} from '../auth_service';
-import { jwtAuthMiddleware, AuthenticatedRequest } from '../auth_middleware';
+import { Router, Request, Response, NextFunction } from 'express';
+import { generateChallenge, verifySignature, issueJwt } from '../auth_service';
 import { logger } from '../logger';
+import { AppError } from '../lib/errors';
 
 /**
  * Auth routes for Stellar wallet-based authentication.
@@ -23,10 +15,10 @@ import { logger } from '../logger';
 export function createAuthRouter(): Router {
   const router = Router();
 
-  router.post('/challenge', async (req: Request, res: Response) => {
+  router.post('/challenge', async (req: Request, res: Response, next: NextFunction) => {
     const { walletAddress } = req.body;
     if (!walletAddress || typeof walletAddress !== 'string') {
-      return res.status(400).json({ error: 'walletAddress is required' });
+      return next(new AppError('VALIDATION_ERROR', 'walletAddress is required', 400));
     }
     try {
       const challenge = await generateChallenge(walletAddress.trim());
@@ -35,37 +27,34 @@ export function createAuthRouter(): Router {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to generate challenge';
       logger.warn('Auth challenge failed', { walletAddress, error: message });
-      return res.status(400).json({ error: message });
+      return next(new AppError('CHALLENGE_FAILED', message, 400));
     }
   });
 
-  /**
-   * POST /api/auth/verify
-   * Body: { walletAddress, challenge, signature }
-   * Returns: { accessToken, refreshToken }
-   */
-  router.post('/verify', async (req: Request, res: Response) => {
+  router.post('/verify', async (req: Request, res: Response, next: NextFunction) => {
     const { walletAddress, challenge, signature } = req.body;
     if (!walletAddress || !challenge || !signature) {
-      return res.status(400).json({ error: 'walletAddress, challenge, and signature are required' });
+      return next(
+        new AppError('VALIDATION_ERROR', 'walletAddress, challenge, and signature are required', 400)
+      );
     }
 
     try {
       const isValid = await verifySignature(walletAddress.trim(), challenge, signature);
+
       if (!isValid) {
         logger.warn('Auth verification failed — invalid signature', { walletAddress });
-        return res.status(401).json({ error: 'Invalid signature' });
+        return next(new AppError('INVALID_SIGNATURE', 'Invalid signature', 401));
       }
 
       const accessToken = issueJwt(walletAddress.trim());
       const refreshToken = await issueRefreshToken(walletAddress.trim());
       logger.info('Auth verification successful', { walletAddress });
-
-      return res.status(200).json({ accessToken, refreshToken });
+      return res.status(200).json({ token });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Verification failed';
       logger.warn('Auth verify error', { walletAddress, error: message });
-      return res.status(401).json({ error: message });
+      return next(new AppError('VERIFICATION_FAILED', message, 401));
     }
   });
 
