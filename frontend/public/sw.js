@@ -16,15 +16,39 @@ const APP_ORIGIN = self.location.origin;
 const API_CACHE = 'stellar-save-api-v2';
 const API_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
+// Cap the runtime cache so it cannot grow without bound.
+const RUNTIME_MAX_ENTRIES = 60;
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Trim a cache to at most `maxEntries`, evicting oldest entries first (FIFO). */
+async function trimCache(cacheName, maxEntries) {
+  const cache = await caches.open(cacheName);
+  const keys = await cache.keys();
+  if (keys.length <= maxEntries) return;
+  // keys() preserves insertion order; delete from the front.
+  for (let i = 0; i < keys.length - maxEntries; i += 1) {
+    await cache.delete(keys[i]);
+  }
+}
+
+/** Notify all controlled clients that a new SW version is now active. */
+async function notifyClientsOfUpdate() {
+  const clientList = await self.clients.matchAll({ includeUncontrolled: true, type: 'window' });
+  for (const client of clientList) {
+    client.postMessage({ type: 'SW_UPDATED', version: SW_VERSION });
+  }
+}
+
 // ─── Install: pre-cache static shell ─────────────────────────────────────────
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
+    caches.open(STATIC_CACHE).then((cache) => cache.addAll(STATIC_ASSETS))
   );
   self.skipWaiting();
 });
 
-// ─── Activate: purge old caches, claim clients ───────────────────────────────
+// ─── Activate: purge ALL stale caches, claim clients, notify of update ────────
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
@@ -37,6 +61,7 @@ self.addEventListener('activate', (event) => {
         )
       )
       .then(() => self.clients.claim())
+      .then(() => notifyClientsOfUpdate())
   );
 });
 
@@ -45,8 +70,8 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Only handle same-origin GET requests
-  if (request.method !== 'GET' || !url.origin.startsWith(APP_ORIGIN.split('//')[0])) return;
+  // Only handle same-origin GET requests.
+  if (request.method !== 'GET' || url.origin !== APP_ORIGIN) return;
 
   // API calls: network-first with cache fallback
   if (url.pathname.startsWith('/api/')) {
@@ -104,31 +129,41 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Navigation requests: network-first, fall back to cached shell or offline page
+  // Navigation requests: network-first, fall back to cached shell or offline page.
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
         .then((res) => {
           const clone = res.clone();
-          caches.open(CACHE_NAME).then((c) => c.put(request, clone));
+          caches.open(RUNTIME_CACHE).then((c) => c.put(request, clone));
           return res;
         })
         .catch(async () => {
-          const cached = await caches.match(request);
-          return cached ?? (await caches.match('/offline.html'));
+          // Read-only offline: serve the previously cached route, then the app
+          // shell ('/'), then the dedicated offline page as a last resort.
+          const cached =
+            (await caches.match(request)) ||
+            (await caches.match('/')) ||
+            (await caches.match('/offline.html'));
+          return cached;
         })
     );
     return;
   }
 
-  // Static assets: cache-first
+  // Static assets: cache-first, populate the runtime cache and prune it.
   event.respondWith(
     caches.match(request).then(
       (cached) =>
         cached ??
         fetch(request).then((res) => {
-          const clone = res.clone();
-          caches.open(CACHE_NAME).then((c) => c.put(request, clone));
+          // Only cache successful, basic (same-origin) responses.
+          if (res && res.status === 200 && res.type === 'basic') {
+            const clone = res.clone();
+            caches.open(RUNTIME_CACHE).then((c) => {
+              c.put(request, clone).then(() => trimCache(RUNTIME_CACHE, RUNTIME_MAX_ENTRIES));
+            });
+          }
           return res;
         })
     )
