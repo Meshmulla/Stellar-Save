@@ -14,6 +14,9 @@ import { FeedbackService } from '../feedback_service';
 import { createAnalyticsMiddlewareStack, createAnalyticsCacheMiddleware } from '../analytics_middleware';
 import { Group, UserInteraction, UserPreference } from '../models';
 import { createNotificationRouter } from './notifications';
+import { createSseRouter } from './sse';
+import { createInsuranceRouter } from './insurance';
+import { createGovernanceRouter } from './governance';
 import { adminAuthMiddleware } from '../auth_middleware';
 import { fraudDetectionService } from '../fraud_detection_service';
 import { apiKeyService } from '../api_key_service';
@@ -71,6 +74,15 @@ export function createV1Router(services: V1Services): Router {
 
   // Notifications (web push subscriptions, preferences, templates)
   router.use('/notifications', createNotificationRouter());
+
+  // SSE event stream (Issue #1011)
+  router.use('/events', createSseRouter(eventIndexer));
+
+  // Insurance pool (Issue #1012)
+  router.use('/groups/:groupId/insurance', createInsuranceRouter());
+
+  // Governance proposals (Issue #1013)
+  router.use('/governance', createGovernanceRouter());
 
   // Search
   router.get('/search', async (req, res) => {

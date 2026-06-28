@@ -28,8 +28,7 @@ const NotificationSettings = lazy(() => import("../pages/settings/NotificationSe
 const AboutPage = lazy(() => import("../pages/AboutPage"));
 const FeedbackAdminPage = lazy(() => import("../pages/FeedbackAdminPage"));
 const TransactionHistoryPage = lazy(() => import("../pages/TransactionHistoryPage"));
-const TransactionBuilderPage = lazy(() => import("../pages/TransactionBuilderPage"));
-const HardwareWalletPage = lazy(() => import("../pages/HardwareWalletPage"));
+const GovernancePage = lazy(() => import("../pages/GovernancePage"));
 
 export const routeConfig: RouteConfig[] = [
   {
@@ -216,6 +215,13 @@ export const routeConfig: RouteConfig[] = [
     protected: true,
     title: "Feedback Dashboard - Stellar Save",
     description: "Review and respond to user feedback",
+  },
+  {
+    path: ROUTES.GOVERNANCE,
+    component: GovernancePage,
+    protected: false,
+    title: "Governance - Stellar Save",
+    description: "Protocol-level proposals: view, vote, and track timelock status",
   },
   {
     path: ROUTES.NOT_FOUND,
