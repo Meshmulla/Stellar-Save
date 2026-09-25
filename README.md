@@ -262,3 +262,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 <!-- handsoff-issue-1687 -->
 - #1687: [Backend] Split admin_service.ts into focused sub-services
+
+<!-- handsoff-issue-1688 -->
+- #1688: [Backend] Standardize database access patterns around Prisma
