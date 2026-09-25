@@ -257,3 +257,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 **Built with ❤️ for financial inclusion on Stellar**
+
+## Handsoff notes
+
+<!-- handsoff-issue-1657 -->
+- #1657: [Testing] Add negative/failure-path tests for KYC rejection flow in mobile
