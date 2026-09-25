@@ -262,3 +262,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 <!-- handsoff-issue-1684 -->
 - #1684: [Backend] Remove deprecated/legacy authentication code paths
+
+<!-- handsoff-issue-1685 -->
+- #1685: [Backend] Extract rate limiting logic into a single reusable middleware
