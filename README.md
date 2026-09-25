@@ -257,3 +257,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 **Built with ❤️ for financial inclusion on Stellar**
+
+## Handsoff notes
+
+<!-- handsoff-issue-1651 -->
+- #1651: [Frontend] Remove dead code from frontend/src/lib utilities
