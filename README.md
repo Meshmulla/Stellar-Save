@@ -265,3 +265,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 <!-- handsoff-issue-1653 -->
 - #1653: [Frontend] Extract shared modal/dialog primitive to replace ad-hoc modal implementations
+
+<!-- handsoff-issue-1654 -->
+- #1654: [Frontend] Remove unused Vite plugins and build config from vite.config.ts
