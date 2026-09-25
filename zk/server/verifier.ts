@@ -4,16 +4,16 @@
  * Closes #1174
  */
 
-import * as snarkjs from "snarkjs";
-import * as fs from "fs";
-import * as path from "path";
+import * as snarkjs from 'snarkjs';
+import * as fs from 'fs';
+import * as path from 'path';
 
-const VKEY_PATH = path.resolve(__dirname, "../../zk/membership_proof_verification_key.json");
+const VKEY_PATH = path.resolve(__dirname, '../../zk/membership_proof_verification_key.json');
 
 let vKey: object | null = null;
 
 function getVKey(): object {
-  if (!vKey) vKey = JSON.parse(fs.readFileSync(VKEY_PATH, "utf8"));
+  if (!vKey) vKey = JSON.parse(fs.readFileSync(VKEY_PATH, 'utf8'));
   return vKey!;
 }
 
@@ -41,9 +41,9 @@ export async function verifyProof(req: VerifyRequest): Promise<VerifyResult> {
 }
 
 // --- Minimal Express route handler (attach to your router) ---
-// import express from "express";
+// import express from 'express';
 // const router = express.Router();
-// router.post("/zk/verify", async (req, res) => {
+// router.post('/zk/verify', async (req, res) => {
 //   const result = await verifyProof(req.body as VerifyRequest);
 //   res.json(result);
 // });
