@@ -251,6 +251,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Handsoff notes
 
+<!-- handsoff-issue-1657 -->
+- #1657: [Testing] Add negative/failure-path tests for KYC rejection flow in mobile
 <!-- handsoff-issue-1649 -->
 - #1649: [Frontend] Audit and modularize frontend/src/components directory
 
