@@ -251,10 +251,11 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Handsoff notes
 
-<!-- handsoff-issue-1657 -->
-- #1657: [Testing] Add negative/failure-path tests for KYC rejection flow in mobile
-<!-- handsoff-issue-1649 -->
-- #1649: [Frontend] Audit and modularize frontend/src/components directory
+<!-- handsoff-issue-1687 -->
+- #1687: [Backend] Split admin_service.ts into focused sub-services
 
-<!-- handsoff-issue-1650 -->
-- #1650: [Frontend] Consolidate duplicate data-fetching logic into custom hooks
+<!-- handsoff-issue-1688 -->
+- #1688: [Backend] Standardize database access patterns around Prisma
+
+<!-- handsoff-issue-1689 -->
+- #1689: [Backend] Add database query performance review for analytics_aggregator.ts
