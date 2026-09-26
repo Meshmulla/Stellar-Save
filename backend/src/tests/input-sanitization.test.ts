@@ -1,15 +1,18 @@
 /**
  * Unit tests for Input Sanitization (Issue #1103)
+ *
+ * Moved from backend/test/unit/input-sanitization.test.ts as part of
+ * test consolidation (Issue #1727).
  */
 
-import { InputSanitizer } from '../../src/input_sanitization_middleware';
+import { InputSanitizer } from '../input_sanitization_middleware';
 
 describe('InputSanitizer', () => {
   describe('XSS Prevention', () => {
     it('should encode HTML entities', () => {
       const input = '<script>alert("XSS")</script>';
       const result = InputSanitizer.sanitizeString(input);
-      
+
       expect(result).not.toContain('<script>');
       expect(result).toContain('&lt;script&gt;');
     });
@@ -31,7 +34,7 @@ describe('InputSanitizer', () => {
     it('should sanitize event handlers', () => {
       const input = '<div onclick="malicious()">Click me</div>';
       const result = InputSanitizer.sanitizeString(input);
-      
+
       expect(result).not.toContain('onclick=');
       expect(result).toContain('&lt;');
     });
@@ -39,14 +42,14 @@ describe('InputSanitizer', () => {
     it('should handle javascript: protocol', () => {
       const input = '<a href="javascript:alert(1)">Click</a>';
       const result = InputSanitizer.sanitizeString(input);
-      
+
       expect(result).not.toContain('javascript:');
     });
 
     it('should handle data URIs', () => {
       const input = '<img src="data:text/html,<script>alert(1)</script>">';
       const result = InputSanitizer.sanitizeString(input);
-      
+
       expect(result).not.toContain('data:text/html');
     });
   });
@@ -54,7 +57,7 @@ describe('InputSanitizer', () => {
   describe('SQL Injection Prevention', () => {
     it('should detect UNION SELECT attacks', () => {
       const input = "' UNION SELECT * FROM users--";
-      
+
       expect(() => {
         InputSanitizer.sanitizeString(input, { stripSql: true });
       }).toThrow('Invalid input detected');
@@ -62,7 +65,7 @@ describe('InputSanitizer', () => {
 
     it('should detect INSERT INTO attacks', () => {
       const input = "'; INSERT INTO users VALUES('hacker', 'pass')--";
-      
+
       expect(() => {
         InputSanitizer.sanitizeString(input, { stripSql: true });
       }).toThrow('Invalid input detected');
@@ -70,7 +73,7 @@ describe('InputSanitizer', () => {
 
     it('should detect DROP TABLE attacks', () => {
       const input = "'; DROP TABLE users--";
-      
+
       expect(() => {
         InputSanitizer.sanitizeString(input, { stripSql: true });
       }).toThrow('Invalid input detected');
@@ -78,7 +81,7 @@ describe('InputSanitizer', () => {
 
     it('should detect OR-based attacks', () => {
       const input = "admin' OR '1'='1";
-      
+
       expect(() => {
         InputSanitizer.sanitizeString(input, { stripSql: true });
       }).toThrow('Invalid input detected');
@@ -93,7 +96,7 @@ describe('InputSanitizer', () => {
       };
 
       const sanitized = InputSanitizer.sanitizeGroupMetadata(metadata);
-      
+
       expect(sanitized.name).not.toContain('<script>');
       expect(sanitized.description).not.toContain('<b>');
     });
@@ -104,7 +107,7 @@ describe('InputSanitizer', () => {
       };
 
       const sanitized = InputSanitizer.sanitizeGroupMetadata(metadata);
-      
+
       expect(sanitized.name.length).toBeLessThanOrEqual(500);
     });
 
@@ -118,7 +121,7 @@ describe('InputSanitizer', () => {
       };
 
       const sanitized = InputSanitizer.sanitizeGroupMetadata(metadata);
-      
+
       expect(sanitized.settings.theme).not.toContain('<script>');
     });
   });
@@ -132,7 +135,7 @@ describe('InputSanitizer', () => {
       };
 
       const sanitized = InputSanitizer.sanitizeProfileData(profile);
-      
+
       expect(sanitized.displayName).not.toContain('<script>');
       expect(sanitized.bio).not.toContain('<iframe>');
     });
@@ -141,17 +144,17 @@ describe('InputSanitizer', () => {
   describe('Comment Sanitization', () => {
     it('should sanitize comments', () => {
       const comment = 'Great group! <script>steal_cookies()</script>';
-      
+
       const sanitized = InputSanitizer.sanitizeComment(comment);
-      
+
       expect(sanitized).not.toContain('<script>');
     });
 
     it('should enforce comment length limit', () => {
       const comment = 'A'.repeat(3000);
-      
+
       const sanitized = InputSanitizer.sanitizeComment(comment);
-      
+
       expect(sanitized.length).toBeLessThanOrEqual(2000);
     });
   });

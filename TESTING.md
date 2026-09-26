@@ -294,16 +294,13 @@ Reference implementation: the connection-strength badge test in
 ```bash
 cd backend
 npm test                    # all unit tests
-npm run test:integration    # integration tests (requires Docker)
 ```
 
 ### Test Structure
 
 | Directory | Config | Purpose |
 |-----------|--------|---------|
-| `src/tests/` | `jest.config.js` | Unit tests (default run) |
-| `test/unit/` | `jest.config.js` | Additional unit tests |
-| `test/integration/` | `jest.integration.config.js` | Integration tests |
+| `src/tests/` | `jest.config.js` | All unit tests |
 | `src/__mocks__/@stellar/` | — | Shared Jest manual mocks |
 
 ### Jest version
