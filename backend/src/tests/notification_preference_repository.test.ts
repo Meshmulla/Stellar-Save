@@ -1,6 +1,7 @@
 import {
   NotificationPreferenceRepository
 } from '../modules/notifications/notification-preference.repository';
+import { NotificationFactory } from '../../test/fixtures/factory';
 
 import type {
   NotificationPreferencePrisma} from '../modules/notifications/notification-preference.repository';
@@ -30,13 +31,15 @@ describe('NotificationPreferenceRepository', () => {
   });
 
   it('findByUserId queries by userId', async () => {
-    db.notificationPreference.findUnique.mockResolvedValue({ userId: 'u1' });
+    const pref = NotificationFactory.buildPreference('u1');
+    db.notificationPreference.findUnique.mockResolvedValue(pref);
     await repo.findByUserId('u1');
     expect(db.notificationPreference.findUnique).toHaveBeenCalledWith({ where: { userId: 'u1' } });
   });
 
   it('findByUnsubscribeToken queries by unsubscribeToken', async () => {
-    db.notificationPreference.findUnique.mockResolvedValue(null);
+    const pref = NotificationFactory.buildPreference('u2', { unsubscribeToken: 'tok-123' });
+    db.notificationPreference.findUnique.mockResolvedValue(pref);
     await repo.findByUnsubscribeToken('tok-123');
     expect(db.notificationPreference.findUnique).toHaveBeenCalledWith({
       where: { unsubscribeToken: 'tok-123' },
