@@ -1,28 +1,19 @@
-# Stellar-Save — Rotational Savings on Stellar
+# Project
 
-[![Coverage](https://codecov.io/gh/Xoulomon/Stellar-Save/branch/main/graph/badge.svg)](https://codecov.io/gh/Xoulomon/Stellar-Save)
-[![Coverage workflow](https://github.com/Xoulomon/Stellar-Save/actions/workflows/coverage.yml/badge.svg)](https://github.com/Xoulomon/Stellar-Save/actions/workflows/coverage.yml)
-[![frontend](https://codecov.io/gh/Xoulomon/Stellar-Save/branch/main/graph/badge.svg?flag=frontend)](https://codecov.io/gh/Xoulomon/Stellar-Save?flags[0]=frontend)
-[![contracts](https://codecov.io/gh/Xoulomon/Stellar-Save/branch/main/graph/badge.svg?flag=contracts)](https://codecov.io/gh/Xoulomon/Stellar-Save?flags[0]=contracts)
-[![backend](https://codecov.io/gh/Xoulomon/Stellar-Save/branch/main/graph/badge.svg?flag=backend)](https://codecov.io/gh/Xoulomon/Stellar-Save?flags[0]=backend)
+A full-stack application with a backend API (REST + GraphQL) and a frontend client.
 
-**A decentralized rotational savings and credit association (ROSCA) built on Stellar Soroban smart contracts.**
+## Documentation
 
-Stellar Save is a traditional community-based savings system where members contribute a fixed amount regularly, and each member receives the total pool on a rotating basis. This project brings this time-tested financial mechanism to the blockchain, making it transparent, trustless, and accessible globally.
+- [Getting Started](docs/guides/getting-started.md)
+- [Backend Service Map](backend/docs/service-map.md)
+- [API Reference](docs/api/README.md) — external REST/GraphQL reference, versioning and deprecation policy
+- [Contracts](contracts/README.md)
 
-## 🎯 What is Stellar-Save?
+## API Reference
 
-Stellar-Save is a rotating savings and credit association (ROSCA) common in Nigeria and across Africa. Members:
-- Form a group with a fixed contribution amount
-- Contribute the same amount each cycle (e.g., weekly or monthly)
-- Take turns receiving the full pool of contributions
-- Build trust and financial discipline within communities
+The external API reference for the backend REST and GraphQL endpoints is published under [`docs/api/`](docs/api/README.md). It is generated from the existing backend route and schema definitions and includes the versioning and deprecation policy for external consumers.
 
-**This Soroban implementation makes Stellar-Save:**
-- ✅ Trustless (no central coordinator needed)
-- ✅ Transparent (all transactions on-chain)
-- ✅ Accessible (anyone with a Stellar wallet can join)
-- ✅ Programmable (automated payouts, no manual coordination)
+## Repository Layout
 
 ## 🏗️ Architecture
 
@@ -260,11 +251,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Handsoff notes
 
-<!-- handsoff-issue-1651 -->
-- #1651: [Frontend] Remove dead code from frontend/src/lib utilities
+<!-- handsoff-issue-1649 -->
+- #1649: [Frontend] Audit and modularize frontend/src/components directory
 
-<!-- handsoff-issue-1653 -->
-- #1653: [Frontend] Extract shared modal/dialog primitive to replace ad-hoc modal implementations
-
-<!-- handsoff-issue-1654 -->
-- #1654: [Frontend] Remove unused Vite plugins and build config from vite.config.ts
+<!-- handsoff-issue-1650 -->
+- #1650: [Frontend] Consolidate duplicate data-fetching logic into custom hooks

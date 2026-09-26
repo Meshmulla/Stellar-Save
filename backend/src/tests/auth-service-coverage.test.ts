@@ -1,3 +1,11 @@
+/**
+ * Backend unit tests for Issue #1535 (#81):
+ * Closing coverage gaps in auth_service to support 85%+ baseline threshold.
+ *
+ * Moved from backend/test/unit/auth-service-coverage.test.ts as part of
+ * test consolidation (Issue #1727).
+ */
+
 import { Keypair } from '@stellar/stellar-sdk';
 
 import {
@@ -8,12 +16,7 @@ import {
   issueRefreshToken,
   revokeSession,
   revokeAllSessions,
-} from '../../src/auth_service';
-
-/**
- * Backend unit tests for Issue #1535 (#81):
- * Closing coverage gaps in auth_service to support 85%+ baseline threshold.
- */
+} from '../auth_service';
 
 describe('auth_service Unit Test Coverage', () => {
   const validKeypair = Keypair.random();
@@ -34,17 +37,22 @@ describe('auth_service Unit Test Coverage', () => {
   });
 
   describe('verifySignature()', () => {
-    it('returns false when signature verification throws an exception', async () => {
-      const msg = await generateChallenge(validAddress);
-      const invalidBase64 = '%%%not_valid_base64%%%';
+    it('returns true for a valid signature', async () => {
+      const challenge = await generateChallenge(validAddress);
+      const signature = validKeypair.sign(Buffer.from(challenge, 'utf8')).toString('base64');
+      const result = await verifySignature(validAddress, challenge, signature);
+      expect(result).toBe(true);
+    });
 
-      const result = await verifySignature(validAddress, msg, invalidBase64);
+    it('returns false for an invalid signature', async () => {
+      const challenge = await generateChallenge(validAddress);
+      const result = await verifySignature(validAddress, challenge, 'invalid-signature');
       expect(result).toBe(false);
     });
   });
 
-  describe('issueJwt() and verifyJwt()', () => {
-    it('signs and verifies payload successfully', () => {
+  describe('issueJwt / verifyJwt', () => {
+    it('issues and verifies a valid JWT', async () => {
       const token = issueJwt(validAddress);
       const decoded = verifyJwt(token);
       expect(decoded.sub).toBe(validAddress);
