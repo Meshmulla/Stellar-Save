@@ -1,6 +1,7 @@
 import {
   MemberReputationRepository
 } from '../modules/reputation/reputation.repository';
+import { ReputationFactory } from '../../test/fixtures/factory';
 
 import type {
   MemberReputationPrisma} from '../modules/reputation/reputation.repository';
@@ -26,13 +27,11 @@ describe('MemberReputationRepository', () => {
   });
 
   it('findByAddress delegates to prisma.findUnique with the address filter', async () => {
-    const row = {
-      address: 'GABC',
+    const row = ReputationFactory.buildReputation('GABC', {
       score: 0.5,
       totalContributions: 2,
       onTimeContributions: 1,
-      updatedAt: new Date(),
-    };
+    });
     db.memberReputation.findUnique.mockResolvedValue(row);
 
     await expect(repo.findByAddress('GABC')).resolves.toBe(row);
@@ -41,14 +40,19 @@ describe('MemberReputationRepository', () => {
 
   it('upsertTotals builds matching create + update payloads', async () => {
     db.memberReputation.upsert.mockResolvedValue({});
-    const totals = { totalContributions: 4, onTimeContributions: 3, score: 0.75 };
+    const totals = ReputationFactory.buildReputation('GXYZ', {
+      totalContributions: 4,
+      onTimeContributions: 3,
+      score: 0.75,
+    });
+    const { address, updatedAt, ...totalsPayload } = totals;
 
-    await repo.upsertTotals('GXYZ', totals);
+    await repo.upsertTotals('GXYZ', totalsPayload);
 
     expect(db.memberReputation.upsert).toHaveBeenCalledWith({
       where: { address: 'GXYZ' },
-      create: { address: 'GXYZ', ...totals },
-      update: totals,
+      create: { address: 'GXYZ', ...totalsPayload },
+      update: totalsPayload,
     });
   });
 

@@ -3,6 +3,7 @@ import { lazy, Suspense } from 'react';
 
 import './App.css';
 import { CardSkeleton } from './components/Skeleton';
+import { AppProviders } from './context/AppProviders';
 import { useDeepLink } from './hooks/useDeepLink';
 
 const AppRouter = lazy(() => import('./routing/AppRouter').then((m) => ({ default: m.AppRouter })));
@@ -30,11 +31,10 @@ export default function App() {
   useDeepLink();
 
   return (
-    <>
+    <AppProviders>
       <Suspense fallback={<RouteLoadingFallback />}>
         <AppRouter />
       </Suspense>
-      <FeedbackWidget />
-    </>
+    </AppProviders>
   );
 }
